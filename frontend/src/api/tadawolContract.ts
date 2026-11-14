@@ -17,6 +17,7 @@ export interface TadawolApiRequest {
   lon: number;
   years: number;
   use_gee: boolean;
+  use_meteomatics?: boolean;
   slope_deg: number;
   weights: OptimizationWeights;
   scenario: ClimateScenario;
@@ -110,6 +111,26 @@ export interface TadawolApiResponse {
   risk_calendar: ContractRiskCalendar;
   agronomist_checklist: ContractChecklistItem[];
   caveats: string[];
+  meteomatics?: {
+    available: boolean;
+    source: 'Meteomatics';
+    rain_source?: 'NASA POWER';
+    error?: string;
+    comparison_year?: number;
+    water_balance?: {
+      months: string[];
+      rain_mm: Array<number | null>;
+      reference_et_mm: Array<number | null>;
+      balance_mm: Array<number | null>;
+      drier_than_rain_months: string[];
+    };
+    most_similar_year?: number | null;
+    growing_degree_days?: {
+      year: number;
+      current: number | null;
+      daily: Array<{ date: string; gdd: number }>;
+    };
+  } | null;
 }
 
 export interface TadawolContractEnvelope {
@@ -122,6 +143,7 @@ export const DEFAULT_CONTRACT_REQUEST: TadawolApiRequest = {
   lon: 9.18,
   years: 10,
   use_gee: false,
+  use_meteomatics: false,
   slope_deg: 5,
   weights: { soil: 7, water: 8, erosion: 5, income: 0 },
   scenario: 'normal',

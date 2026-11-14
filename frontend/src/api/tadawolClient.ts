@@ -44,6 +44,7 @@ function normalizeBackendResponse(json: Record<string, any>, fallback: TadawolAp
     sowing_window: { ...fallback.sowing_window, ...(json.sowing_window ?? {}) },
     risk_calendar: { ...fallback.risk_calendar, ...(json.risk_calendar ?? {}) },
     caveats: Array.isArray(json.caveats) ? json.caveats : fallback.caveats,
+    meteomatics: json.meteomatics ?? fallback.meteomatics ?? null,
   };
 }
 

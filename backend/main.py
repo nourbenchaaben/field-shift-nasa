@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from .data.climate import get_climate_profile
+from .data.meteomatics_client import build_profile as build_meteomatics_profile
 from .data.power_client import MONTHS, doy_to_text
 from .engine.crops import CROPS, ROTATIONS
 from .engine.scenarios import select_wet_climate
@@ -27,6 +28,7 @@ class AnalyzeRequest(BaseModel):
     lon: float = Field(9.18, ge=-180, le=180)
     years: int = Field(10, ge=5, le=20)
     use_gee: bool = False
+    use_meteomatics: bool = False
     slope_deg: float | None = Field(5, ge=0, le=90)
     weights: dict[str, float] = Field(
         default={"soil": 7, "water": 8, "erosion": 5, "income": 0}
@@ -195,6 +197,19 @@ def analyze(request: AnalyzeRequest):
         profile = get_climate_profile(request.lat, request.lon, request.years, request.use_gee)
     except Exception as error:
         raise HTTPException(status_code=502, detail=f"Climate data unavailable: {error}") from error
+    meteomatics = None
+    if request.use_meteomatics:
+        try:
+            meteomatics = {
+                "available": True,
+                **build_meteomatics_profile(request.lat, request.lon, profile["frame"]),
+            }
+        except Exception as error:
+            meteomatics = {
+                "available": False,
+                "source": "Meteomatics",
+                "error": str(error),
+            }
 
     rain = profile["rain_by_year"]
     rain_values = np.array(list(rain.values()), dtype=float)
@@ -250,6 +265,7 @@ def analyze(request: AnalyzeRequest):
             "calibration_note": "Crop values are generic and require local agronomist validation.",
             "sources_used": ["NASA POWER"] + (["SMAP", "MODIS", "SRTM"] if request.use_gee else []),
         },
+        "meteomatics": meteomatics,
         "rotations": [
             {
                 "rank": index + 1,

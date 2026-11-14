@@ -20,6 +20,20 @@ Run the API from the project root:
 python -m uvicorn backend.main:app --reload --port 8000
 ```
 
+Meteomatics is an optional enrichment layer; NASA POWER remains the
+authoritative source for rainfall and rotation scoring. Configure credentials
+outside the repository and send `"use_meteomatics": true` to `/api/analyze`:
+
+```powershell
+$env:METEOMATICS_USER = "your_username"
+$env:METEOMATICS_PWD = "your_password"
+```
+
+The response includes `meteomatics.water_balance`. Its `rain_mm` values come
+from NASA POWER and its `reference_et_mm` values come from Meteomatics.
+Missing credentials or unavailable Meteomatics parameters are reported in
+`meteomatics.error`; the NASA response still succeeds.
+
 Run the frontend:
 
 ```powershell
