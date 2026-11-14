@@ -20,14 +20,14 @@ app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173"], allo
 class AnalyzeRequest(BaseModel):
     lat: float = Field(36.73, ge=-90, le=90)
     lon: float = Field(9.18, ge=-180, le=180)
-    years: int = Field(10, ge=2, le=30)
+    years: int = Field(10, ge=5, le=20)
     use_gee: bool = False
     slope_deg: float | None = Field(5, ge=0, le=90)
     weights: dict[str, float] = {"soil": 7, "water": 8, "erosion": 5, "income": 0}
     scenario: Literal["normal", "bad_year"] = "normal"
     replay_year: int | None = None
-    rain_change_pct: float = Field(0, ge=-100, le=100)
-    custom_rotation: list[str] | None = None
+    rain_change_pct: int = Field(0, ge=-40, le=20)
+    custom_rotation: list[str] = ["Durum wheat", "Fava bean", "Barley + vetch"]
 
 
 def _risk_calendar(profile, gee):
@@ -83,15 +83,17 @@ def analyze(request: AnalyzeRequest):
     rotations = []
     for rotation_id, (name, crop_list) in ROTATIONS.items():
         score, parts = score_rotation(crop_list, wet, profile["heavy_clim"], slope, request.weights)
-        rotations.append({"id": rotation_id, "name": name, "crops": crop_list, "total_score": score,
-                          "status": status(score), "explanation": explain(parts),
+        rotations.append({"rotation_id": rotation_id, "id": rotation_id, "name": name, "crops": crop_list,
+                          "total_score": score, "status_color": status(score), "status": status(score),
+                          "explain_text": explain(parts), "explanation": explain(parts),
                           "breakdown": {key: round(value, 3) for key, value in parts.items()}})
-    if request.custom_rotation:
-        if len(request.custom_rotation) != 3 or any(crop not in CROPS for crop in request.custom_rotation):
-            raise HTTPException(status_code=422, detail="custom_rotation must contain three known crops")
-        score, parts = score_rotation(request.custom_rotation, wet, profile["heavy_clim"], slope, request.weights)
-        rotations.append({"id": "custom", "name": "Custom rotation", "crops": request.custom_rotation,
-                          "total_score": score, "status": status(score), "explanation": explain(parts),
+    if len(request.custom_rotation) != 3 or any(crop not in CROPS for crop in request.custom_rotation):
+        raise HTTPException(status_code=422, detail="custom_rotation must contain three known crops")
+    score, parts = score_rotation(request.custom_rotation, wet, profile["heavy_clim"], slope, request.weights)
+    rotations.append({"rotation_id": "custom", "id": "custom", "name": "Custom rotation",
+                          "crops": request.custom_rotation, "total_score": score,
+                          "status_color": status(score), "status": status(score),
+                          "explain_text": explain(parts), "explanation": explain(parts),
                           "breakdown": {key: round(value, 3) for key, value in parts.items()}})
     rotations.sort(key=lambda item: item["total_score"], reverse=True)
     onset = profile["autumn_onset"]
@@ -105,6 +107,14 @@ def analyze(request: AnalyzeRequest):
                        "label": "Rainfall very variable" if cv > 0.3 else "Satellite data good, crop table generic",
                        "sources_used": ["NASA POWER"] + (["SMAP", "MODIS", "SRTM"] if request.use_gee else [])},
         "rotations": rotations,
+        "monthly_telemetry": {
+            "months": MONTHS,
+            "monthly_rain_mm": profile["monthly_rain_mm"],
+            "monthly_soil_moisture": profile["wet_clim"],
+            "monthly_ndvi": [(profile["gee"] or {}).get("ndvi_clim", {}).get(str(m)) for m in range(1, 13)],
+            "monthly_temp_c": profile["monthly_temp_c"],
+            "monthly_temp_min_c": profile["monthly_temp_min_c"],
+        },
         "bare_field_clock": {"months": MONTHS, "heavy_rain_days": profile["heavy_clim"],
                              "ndvi": [(profile["gee"] or {}).get("ndvi_clim", {}).get(str(m)) for m in range(1, 13)],
                              "exposed_heavy_rain_months": []},

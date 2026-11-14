@@ -52,6 +52,9 @@ def build_power_profile(frame: pd.DataFrame) -> dict[str, Any]:
     rain_by_year = frame["PRECTOTCORR"].groupby(frame.index.year).sum()
     heavy = (frame["PRECTOTCORR"] >= 20).groupby(frame.index.month).sum() / count
     wet = frame["GWETROOT"].groupby(frame.index.month).mean()
+    monthly_rain = frame["PRECTOTCORR"].groupby(frame.index.month).sum() / count
+    monthly_temp = frame["T2M"].groupby(frame.index.month).mean()
+    monthly_temp_min = frame["T2M_MIN"].groupby(frame.index.month).mean()
     onset = autumn_onset(frame)
     frost = ((frame["T2M_MIN"] < 0).groupby(frame.index.month).sum() / count)
     return {
@@ -63,7 +66,10 @@ def build_power_profile(frame: pd.DataFrame) -> dict[str, Any]:
             for year in years
         },
         "heavy_clim": series_values(heavy.reindex(range(1, 13)).fillna(0)),
+        "monthly_rain_mm": series_values(monthly_rain.reindex(range(1, 13)).fillna(0)),
         "wet_clim": series_values(wet.reindex(range(1, 13))),
+        "monthly_temp_c": series_values(monthly_temp.reindex(range(1, 13))),
+        "monthly_temp_min_c": series_values(monthly_temp_min.reindex(range(1, 13))),
         "frost_clim": series_values(frost.reindex(range(1, 13)).fillna(0)),
         "autumn_onset": {str(int(k)): int(v) for k, v in onset.items()},
     }

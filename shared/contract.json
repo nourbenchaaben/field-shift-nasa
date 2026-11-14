@@ -4,22 +4,70 @@
     "lon": 9.18,
     "years": 10,
     "use_gee": false,
-    "slope_deg": 5,
+    "slope_deg": 5.0,
     "weights": { "soil": 7, "water": 8, "erosion": 5, "income": 0 },
     "scenario": "normal",
-    "replay_year": null,
+    "replay_year": 2022,
     "rain_change_pct": 0,
     "custom_rotation": ["Durum wheat", "Fava bean", "Barley + vetch"]
   },
   "response": {
     "region_validated": true,
-    "kpis": {},
-    "confidence": {},
-    "rotations": [],
-    "bare_field_clock": {},
-    "sowing_window": {},
+    "kpis": {
+      "avg_rain_mm": 540,
+      "driest_year": 2022,
+      "driest_year_mm": 310,
+      "heavy_rain_days_yr": 4.2,
+      "slope_deg": 5.0
+    },
+    "confidence": {
+      "level": "medium",
+      "label": "Satellite data good, crop table generic",
+      "sources_used": ["NASA POWER"]
+    },
+    "rotations": [
+      {
+        "rotation_id": "B",
+        "name": "Wheat > Fava bean > Wheat",
+        "crops": ["Durum wheat", "Fava bean", "Durum wheat"],
+        "total_score": 7.4,
+        "status_color": "green",
+        "explain_text": "Strongest: soil health / nitrogen. Weakest: income / forage.",
+        "breakdown": { "soil": 0.73, "erosion": 0.81, "water": 0.72, "income": 0.61 }
+      }
+    ],
+    "monthly_telemetry": {
+      "months": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
+      "monthly_rain_mm": [70, 65, 55, 40, 25, 10, 3, 5, 35, 60, 75, 80],
+      "monthly_soil_moisture": [0.55, 0.58, 0.52, 0.45, 0.35, 0.25, 0.18, 0.2, 0.32, 0.48, 0.6, 0.62],
+      "monthly_ndvi": [0.55, 0.62, 0.68, 0.6, 0.38, 0.21, 0.18, 0.17, 0.2, 0.28, 0.42, 0.5],
+      "monthly_temp_c": [10, 11, 14, 17, 22, 27, 31, 31, 26, 21, 15, 11],
+      "monthly_temp_min_c": [4, 5, 7, 10, 14, 19, 22, 22, 18, 13, 8, 5]
+    },
+    "bare_field_clock": {
+      "months": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
+      "heavy_rain_days": [0.8, 0.6, 0.4, 0.3, 0.1, 0.0, 0.0, 0.1, 0.4, 0.6, 0.5, 0.4],
+      "ndvi": [0.55, 0.62, 0.68, 0.6, 0.38, 0.21, 0.18, 0.17, 0.2, 0.28, 0.42, 0.5],
+      "exposed_heavy_rain_months": ["Oct"]
+    },
+    "sowing_window": {
+      "median_date": "14 Oct",
+      "earliest_date": "18 Sep",
+      "latest_date": "22 Nov",
+      "spread_days": 65,
+      "yearly_doy": { "2020": 285, "2021": 298, "2022": 315 }
+    },
     "risk_calendar": {},
-    "agronomist_checklist": [],
-    "caveats": []
+    "agronomist_checklist": [
+      "Soil salinity and pH of this field",
+      "Local seed availability and prices",
+      "Local buyers / market price for the new crop",
+      "Disease history (chickpea blight, fava chocolate spot)",
+      "Sowing dates recommended by the local extension office"
+    ],
+    "caveats": [
+      "Coarse satellite pixels (SMAP ~9 km, POWER ~50 km) may not match a single field.",
+      "Crop responses use generic regional assumptions; verify with local extension services."
+    ]
   }
 }
