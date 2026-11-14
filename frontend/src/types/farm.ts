@@ -2,151 +2,242 @@ export type AppScreen =
   | 'landing'
   | 'auth'
   | 'dashboard'
+  | 'calendar'
   | 'history'
   | 'rotation-lab'
   | 'predictions';
 
-export type ZoneId = 'S1' | 'S2' | 'S3' | 'S4';
+export type SoilType = 'Loamy' | 'Clay' | 'Sandy' | 'Silt' | 'Peaty';
 
-export type SoilType =
-  | 'Loamy'
-  | 'Clay-Loam'
-  | 'Sandy Loam'
-  | 'Clay'
-  | 'Silt Loam'
-  | 'Calcareous';
+export type SlopeOption =
+  | 'Flat'
+  | 'Gentle Slope'
+  | 'Steep Slope'
+  | 'Auto-detect via SRTM Elevation';
 
-export type IrrigationType =
-  | 'Precision Drip'
-  | 'Center-Pivot Sprinkler'
-  | 'Furrow / Surface'
-  | 'Rain-Fed + Supplemental';
+export type IrrigationType = 'Rain-fed' | 'Drip' | 'Sprinkler' | 'Canal / Well';
 
-export type WaterAccessLevel = 'Abundant' | 'Moderate' | 'Seasonal / Limited' | 'Arid / Scarce';
-
-export type StrategyPriority =
-  | 'balanced'
-  | 'drought-resilient'
-  | 'soil-regeneration'
-  | 'high-yield';
+export type ClimateZone =
+  | 'Mediterranean'
+  | 'Temperate'
+  | 'Semi-Arid'
+  | 'Continental'
+  | 'Subtropical'
+  | 'Tropical';
 
 export interface Coordinates {
   lat: number;
   lng: number;
 }
 
-export interface NasaBaseline {
-  smapSoilMoisturePct: number;
-  modisSurfaceTempC: number;
-  ndviBaseline: number;
-  annualPrecipMm: number;
-  solarRadiationKwh: number;
-  lastSyncedIso: string;
-  satellitePassId: string;
+export type RiskLevel = 'green' | 'yellow' | 'red';
+
+export interface MonthlyRiskCalendarRow {
+  month: string; // Jan..Dec
+  frostDaysPerYr: number; // T2M_MIN < 0 C (yellow >= 0.2, red >= 1.0)
+  frostLevel: RiskLevel;
+  heavyRainDaysPerYr: number; // PRECTOTCORR >= 20 mm (yellow >= 0.3, red >= 1.0)
+  heavyRainLevel: RiskLevel;
+  soilWetness: number; // 0..1 GWETROOT or SMAP sm_rootzone (yellow <= 0.45, red <= 0.30)
+  drySoilLevel: RiskLevel;
+  ndvi: number; // -0.2..1.0 MODIS MOD13Q1 x0.0001 (yellow <= 0.35, red <= 0.25)
+  bareFieldLevel: RiskLevel;
+}
+
+export interface NasaPowerDailyPoint {
+  date: string; // YYYY-MM-DD
+  label: string; // e.g., "Dec 18"
+  tempC: number;
+  rainMm: number;
+  solarMj: number;
+  humidityPct: number;
+  rootWetnessPct: number; // 0..100 (GWETROOT * 100)
+  topWetnessPct: number; // 0..100 (GWETTOP * 100)
+}
+
+export interface NasaPowerMonthlyPoint {
+  month: string; // Jan..Dec
+  tempC: number;
+  minTempC: number;
+  rainMmMonth: number;
+  rootWetnessPct: number;
+  solarMj: number;
+  humidityPct: number;
+}
+
+export interface Phase2SatelliteLayer {
+  id: 'smap' | 'modis_landsat' | 'srtm';
+  name: string;
+  shortName: string;
+  assetId: string;
+  resolution: string;
+  status: 'Ready' | 'Active Estimate';
+  metricLabel: string;
+  metricValue: string;
+  plainSummary: string;
+  limitation: string;
+}
+
+export interface NasaPowerDataset {
+  source: 'nasa-power-live' | 'nasa-power-fallback';
+  fetchedAt: string;
+  yearsAnalyzed: string; // e.g., "2021–2025 (5 complete years)"
+  elevationM: number;
+  avgTempC: number;
+  minTempC: number;
+  annualRainMm: number;
+  driestYear: number;
+  driestYearMm: number;
+  frostDaysPerYear: number;
+  heavyRainDaysPerYear: number;
+  autumnRainOnset: string; // e.g., "Sep 24" (first day >= Sep 1 with 3-day rain >= 20mm)
+  recentRain14dMm: number;
+  rootMoisturePct: number;
+  topMoisturePct: number;
+  humidityPct: number;
+  solarMj: number;
+  ndviEstimate: number;
+  waterStressScore: number; // 0 (none) to 100 (severe)
+  moistureStatus: 'Dry' | 'Fair' | 'Good' | 'Wet';
+  moisturePlainText: string;
+  weatherPlainText: string;
+  daily: NasaPowerDailyPoint[];
+  monthly: NasaPowerMonthlyPoint[];
+  riskCalendarMonthly: MonthlyRiskCalendarRow[];
+  phase2Adapters: Phase2SatelliteLayer[];
 }
 
 export interface FarmerProfile {
   name: string;
   email: string;
   farmName: string;
+  photoDataUrl?: string;
+  countryCode: string;
+  countryName: string;
+  countryFlag: string;
+  climateZone: ClimateZone;
   regionLabel: string;
   coordinates: Coordinates;
-  boundary: [number, number][]; // Array of [lat, lng] forming farm boundary
+  boundary: [number, number][];
   areaHectares: number;
   soilType: SoilType;
+  slopeOption: SlopeOption;
+  slopeDeg: number;
   irrigationType: IrrigationType;
-  waterAccess: WaterAccessLevel;
   equipment: string[];
   previousCrops: string[];
-  nasaBaseline: NasaBaseline;
+  nasaPower: NasaPowerDataset;
 }
 
 export interface CropInfo {
   id: string;
   name: string;
-  family: 'Cereal' | 'Legume' | 'Oilseed' | 'Forage / Cover' | 'Horticulture';
+  family: 'Cereal' | 'Legume' | 'Oilseed' | 'Cover Crop' | 'Vegetable';
   color: string;
   lightBg: string;
   textColor: string;
   droughtTolerance: 'Low' | 'Moderate' | 'High' | 'Very High';
-  nitrogenImpactKgHa: number; // positive = fixes N, negative = consumes N
+  nitrogenEffect: number; // positive = fixes N, negative = uses N
   waterNeedMm: number;
   baseYieldTha: number;
-  revenuePerTonUsd: number;
-  rootDepthCm: number;
-  pestBreakRole: string;
-  shortNote: string;
+  idealTempMin: number;
+  idealTempMax: number;
+  climates: ClimateZone[];
+  soilBenefit: string;
+  plainNote: string;
 }
 
-export interface ZoneCropAssignment {
-  zoneId: ZoneId;
+export interface UnifiedSeasonStep {
+  stepNumber: number; // 1..4
+  seasonName: string; // e.g., "Season 1 · Autumn / Winter"
+  shortSeason: string; // "Season 1"
+  timingLabel: string; // "Oct – May"
   cropId: string;
-  growthStage: string;
-  ndvi: number;
-  soilMoisturePct: number;
-  nitrogenKgHa: number;
-  healthScore: number;
-  expectedYieldTha: number;
-  rationale: string;
+  cropName: string;
+  cropColor: string;
+  cropFamily: string;
+  stageLabel: string;
+  soilRichnessScore: number; // 0..100 increasing over steps
+  chemicalReductionPct: number; // % synthetic chemical drop by this step
+  moistureRetentionPct: number;
+  whatToDo: string;
+  soilImprovementNote: string;
+  pestBreakNote: string;
 }
 
-export interface SeasonRotationStep {
-  seasonIndex: number; // 0..3
-  seasonLabel: string; // e.g., "Season 1 · Autumn/Winter 2026"
-  shortLabel: string; // "S1 · 2026-27"
-  focusObjective: string;
-  zones: Record<ZoneId, ZoneCropAssignment>;
-}
-
-export interface RotationParameters {
-  priority: StrategyPriority;
-  waterConservationPct: number; // 0..45
-  cycleLengthYears: 2 | 3 | 4;
-  organicFocus: boolean;
-}
-
-export interface RotationStrategy {
+export interface ScoredRotationStrategy {
   id: string;
-  name: string;
-  approvedAt: string;
-  parameters: RotationParameters;
-  seasons: SeasonRotationStep[];
-  restorationPillars: {
-    title: string;
-    metric: string;
-    detail: string;
-    category: 'nitrogen' | 'pest' | 'water' | 'carbon';
-  }[];
-  summaryMetrics: {
-    projectedYieldGainPct: number;
-    waterSavingsPct: number;
-    nitrogenGainKgHa: number;
-    sustainabilityScore: number;
-    soilOrganicMatterGainPct: number;
-  };
-}
-
-export interface ZoneDiff {
-  zoneId: ZoneId;
-  fromCropId: string;
-  toCropId: string;
-  reason: string;
-}
-
-export interface ProposedStrategyUpdate {
-  id: string;
-  source: 'ai' | 'parameters';
+  rank: 1 | 2 | 3;
+  tierLabel: string; // "Top 1 Strategy", "Top 2 Strategy", "Top 3 Strategy"
+  focusTag: string;
   title: string;
-  summary: string;
-  zoneDiffs: ZoneDiff[];
-  metricDeltas: {
-    yieldDeltaPct: number;
-    waterSavingsDeltaPct: number;
-    nitrogenDeltaKgHa: number;
-    sustainabilityDelta: number;
+  subtitle: string;
+  image: string;
+  matchScore: number; // 0..100
+  highlights: string[];
+  steps: UnifiedSeasonStep[];
+  aiSuggestions: string[];
+  benefits: {
+    title: string;
+    detail: string;
+    metric: string;
+  }[];
+  expectedOutput: {
+    yieldImprovementPct: number;
+    chemicalReductionPct: number;
+    waterSavingsPct: number;
+    soilFertilityGainPct: number;
+    sustainabilityScore: number;
+    bareDaysPerYear: number;
+    plainSummary: string;
   };
-  proposedStrategy: RotationStrategy;
-  createdAt: string;
+}
+
+export interface FarmBeforeAnalysis {
+  headline: string;
+  soilStatusLabel: string;
+  moistureStatusLabel: string;
+  slopeStatusLabel: string;
+  chemicalRiskLabel: string;
+  strengths: string[];
+  needsAttention: string[];
+}
+
+export interface CalendarEvent {
+  id: string;
+  date: string; // YYYY-MM-DD
+  year: number;
+  month: number; // 1..12
+  season: 'Spring' | 'Summer' | 'Autumn' | 'Winter';
+  phase: 'past' | 'current' | 'future';
+  category: 'planting' | 'harvest' | 'soil' | 'water' | 'rotation' | 'alert';
+  title: string;
+  description: string;
+  cropName?: string;
+  completed?: boolean;
+  isCustom?: boolean;
+}
+
+export interface HistoricalSeasonRecord {
+  id: string;
+  year: number;
+  seasonLabel: string;
+  cropId: string;
+  cropName: string;
+  cropColor: string;
+  yieldTha: number;
+  soilOrganicMatterPct: number;
+  somDeltaPct: number;
+  chemicalInputIndex: number; // 100 baseline -> lower is better
+  nasaSummary: {
+    rainfallMm: number;
+    avgTempC: number;
+    moistureLabel: string;
+    rootMoisturePct: number;
+    ndviAvg: number;
+  };
+  soilNotes: string;
+  farmerActions: string[];
 }
 
 export interface ChatMessage {
@@ -154,43 +245,44 @@ export interface ChatMessage {
   role: 'assistant' | 'user';
   content: string;
   timestamp: string;
-  proposalId?: string;
-  proposalSnapshot?: ProposedStrategyUpdate;
-  proposalStatus?: 'pending' | 'approved' | 'discarded';
 }
 
-export interface HistoricalZoneRecord {
-  zoneId: ZoneId;
-  cropId: string;
-  yieldTha: number;
-  ndviAvg: number;
-  soilNitrogenEnd: number;
-  notes: string;
-}
+export type FarmEditTab = 'location-size' | 'soil-water' | 'crops-gear';
 
-export interface HistoricalSeasonRecord {
+export interface FarmRecord {
   id: string;
-  year: number;
-  seasonLabel: string;
-  nasaTelemetry: {
-    rainfallMm: number;
-    avgSurfaceTempC: number;
-    meanNdvi: number;
-    droughtAnomaly: string;
-    smapAvgMoisturePct: number;
-  };
-  zones: Record<ZoneId, HistoricalZoneRecord>;
-  farmerDecisions: string[];
-  avgYieldTha: number;
-  soilOrganicMatterPct: number;
-  somDeltaPct: number;
-  nitrogenBalanceKgHa: number;
+  farmName: string;
+  countryCode: string;
+  countryName: string;
+  countryFlag: string;
+  climateZone: ClimateZone;
+  regionLabel: string;
+  coordinates: Coordinates;
+  boundary: [number, number][];
+  areaHectares: number;
+  soilType: SoilType;
+  slopeOption: SlopeOption;
+  slopeDeg: number;
+  irrigationType: IrrigationType;
+  equipment: string[];
+  previousCrops: string[];
+  nasaPower: NasaPowerDataset;
+  selectedStrategyId: string | null;
+  customCalendarEvents: CalendarEvent[];
+  completedEventIds: string[];
 }
 
-export interface StrategyApprovalLog {
-  id: string;
-  timestamp: string;
-  title: string;
-  source: 'ai' | 'parameters' | 'initial';
-  summary: string;
+export interface StoredAccount {
+  email: string;
+  password: string;
+  name: string;
+  photoDataUrl?: string;
+  farms: FarmRecord[];
+  activeFarmId: string;
+  // Legacy fields retained as optional for automatic v3 localStorage migration
+  profile?: FarmerProfile;
+  selectedStrategyId?: string | null;
+  customCalendarEvents?: CalendarEvent[];
+  completedEventIds?: string[];
+  updatedAt: string;
 }

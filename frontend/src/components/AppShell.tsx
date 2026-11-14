@@ -1,686 +1,824 @@
-import React, { useState } from 'react';
-import {
-  Check,
-  ChevronLeft,
-  ChevronRight,
-  Clock,
-  Code2,
-  FlaskConical,
-  Home,
-  LayoutDashboard,
-  LogOut,
-  Menu,
-  RotateCcw,
-  Satellite,
-  Settings,
-  TrendingUp,
-  User,
-  X,
-} from 'lucide-react';
+import React, { useMemo, useRef, useState } from 'react';
+import { useFarm } from '../context/FarmContext';
+import { AppScreen, SlopeOption, SoilType } from '../types/farm';
 import { BrandMark } from './BrandMark';
 import { ContractInspectorModal } from './ContractInspectorModal';
-import { useFarm } from '../context/FarmContext';
-import { AppScreen, IrrigationType, SoilType, WaterAccessLevel } from '../types/farm';
-import { EQUIPMENT_OPTIONS, PREVIOUS_CROP_OPTIONS } from '../data/agronomyData';
+import { DataSourcesModal } from './DataSourcesModal';
+import { FarmManagerModal } from './FarmManagerModal';
+import { SplitAiChatbot } from './SplitAiChatbot';
+import { GLOBAL_COUNTRIES } from '../data/countries';
+import { buildDefaultBoundary, scaleBoundaryToHectares } from '../data/agronomyData';
+import {
+  Bot,
+  CalendarDays,
+  Camera,
+  CheckCircle2,
+  Code2,
+  History,
+  LayoutDashboard,
+  LogOut,
+  MapPin,
+  Menu,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Satellite,
+  Search,
+  Sparkles,
+  TrendingUp,
+  Upload,
+  X,
+} from 'lucide-react';
 
 interface AppShellProps {
   children: React.ReactNode;
 }
 
-const NAV_ITEMS: { id: AppScreen; label: string; shortDesc: string; icon: React.ComponentType<{ className?: string }> }[] = [
+const NAV_ITEMS: { id: AppScreen; label: string; sub: string; icon: React.ReactNode }[] = [
   {
     id: 'dashboard',
     label: 'Dashboard',
-    shortDesc: 'Live map & analytics',
-    icon: LayoutDashboard,
+    sub: 'Live Field & NASA Data',
+    icon: <LayoutDashboard className="w-4 h-4" />,
+  },
+  {
+    id: 'calendar',
+    label: 'Calendar',
+    sub: 'Tasks & Season Roadmap',
+    icon: <CalendarDays className="w-4 h-4" />,
   },
   {
     id: 'history',
     label: 'Farm History',
-    shortDesc: 'Past seasons & logs',
-    icon: Clock,
+    sub: 'Past Years & Harvests',
+    icon: <History className="w-4 h-4" />,
   },
   {
     id: 'rotation-lab',
     label: 'Rotation Lab',
-    shortDesc: '4-zone AI planner',
-    icon: FlaskConical,
+    sub: 'Top 3 Plans & Simulation',
+    icon: <Sparkles className="w-4 h-4" />,
   },
   {
     id: 'predictions',
     label: 'Future Prediction',
-    shortDesc: '5-year state forecast',
-    icon: TrendingUp,
+    sub: '5-Year Soil & Yield',
+    icon: <TrendingUp className="w-4 h-4" />,
   },
 ];
 
-const SOIL_TYPES: SoilType[] = ['Loamy', 'Clay-Loam', 'Sandy Loam', 'Clay', 'Silt Loam', 'Calcareous'];
-const IRRIGATION_TYPES: IrrigationType[] = [
-  'Precision Drip',
-  'Center-Pivot Sprinkler',
-  'Furrow / Surface',
-  'Rain-Fed + Supplemental',
+const SOIL_TYPES: SoilType[] = ['Loamy', 'Clay', 'Sandy', 'Silt', 'Peaty'];
+const SLOPE_OPTIONS: SlopeOption[] = [
+  'Auto-detect via SRTM Elevation',
+  'Flat',
+  'Gentle Slope',
+  'Steep Slope',
 ];
-const WATER_ACCESS_LEVELS: WaterAccessLevel[] = [
-  'Abundant',
-  'Moderate',
-  'Seasonal / Limited',
-  'Arid / Scarce',
-];
+
+function getInitials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return 'TF';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
 
 export const AppShell: React.FC<AppShellProps> = ({ children }) => {
   const {
     screen,
-    profile,
-    strategy,
-    pendingProposal,
     navigate,
+    profile,
+    farms,
+    activeFarmId,
+    switchFarm,
+    openAddFarmModal,
+    openEditFarmModal,
     logout,
     updateProfile,
-    resetDemoState,
+    refreshLiveNasaData,
+    isFetchingNasa,
+    toastMessage,
+    isChatOpen,
+    setIsChatOpen,
+    isDataSourcesOpen,
+    setIsDataSourcesOpen,
+    contractSource,
   } = useFarm();
 
-  const [collapsed, setCollapsed] = useState(false);
-  const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
-  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [profileModalOpen, setProfileModalOpen] = useState(false);
   const [contractModalOpen, setContractModalOpen] = useState(false);
 
-  // Local edit form state
+  // Profile modal draft state
   const [editName, setEditName] = useState(profile.name);
   const [editFarmName, setEditFarmName] = useState(profile.farmName);
+  const [editCountryCode, setEditCountryCode] = useState(profile.countryCode);
+  const [countrySearch, setCountrySearch] = useState('');
   const [editSoil, setEditSoil] = useState<SoilType>(profile.soilType);
-  const [editIrrigation, setEditIrrigation] = useState<IrrigationType>(profile.irrigationType);
-  const [editWater, setEditWater] = useState<WaterAccessLevel>(profile.waterAccess);
-  const [editEquipment, setEditEquipment] = useState<string[]>(profile.equipment);
-  const [editPrevCrops, setEditPrevCrops] = useState<string[]>(profile.previousCrops);
+  const [editSlope, setEditSlope] = useState<SlopeOption>(profile.slopeOption);
+  const [editPhoto, setEditPhoto] = useState<string | undefined>(profile.photoDataUrl);
+  const [savingProfile, setSavingProfile] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const openProfileEditor = () => {
+  const openProfileSettings = () => {
     setEditName(profile.name);
     setEditFarmName(profile.farmName);
+    setEditCountryCode(profile.countryCode);
+    setCountrySearch('');
     setEditSoil(profile.soilType);
-    setEditIrrigation(profile.irrigationType);
-    setEditWater(profile.waterAccess);
-    setEditEquipment(profile.equipment);
-    setEditPrevCrops(profile.previousCrops);
-    setProfileMenuOpen(false);
-    setEditModalOpen(true);
+    setEditSlope(profile.slopeOption);
+    setEditPhoto(profile.photoDataUrl);
+    setProfileModalOpen(true);
   };
 
-  const handleSaveProfile = (e: React.FormEvent) => {
+  const filteredCountries = useMemo(() => {
+    const q = countrySearch.trim().toLowerCase();
+    if (!q) return GLOBAL_COUNTRIES;
+    return GLOBAL_COUNTRIES.filter(
+      (c) =>
+        c.name.toLowerCase().includes(q) ||
+        c.regionHint.toLowerCase().includes(q) ||
+        c.code.toLowerCase().includes(q)
+    );
+  }, [countrySearch]);
+
+  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        setEditPhoto(reader.result);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
-    updateProfile({
-      name: editName.trim() || profile.name,
-      farmName: editFarmName.trim() || profile.farmName,
-      soilType: editSoil,
-      irrigationType: editIrrigation,
-      waterAccess: editWater,
-      equipment: editEquipment,
-      previousCrops: editPrevCrops,
-    });
-    setEditModalOpen(false);
+    setSavingProfile(true);
+    const chosenCountry =
+      GLOBAL_COUNTRIES.find((c) => c.code === editCountryCode) ?? GLOBAL_COUNTRIES[0];
+    const countryChanged = chosenCountry.code !== profile.countryCode;
+
+    const newBoundary = countryChanged
+      ? scaleBoundaryToHectares(
+          buildDefaultBoundary(chosenCountry.lat, chosenCountry.lng),
+          profile.areaHectares
+        )
+      : profile.boundary;
+
+    await updateProfile(
+      {
+        name: editName.trim() || profile.name,
+        farmName: editFarmName.trim() || profile.farmName,
+        photoDataUrl: editPhoto,
+        countryCode: chosenCountry.code,
+        countryName: chosenCountry.name,
+        countryFlag: chosenCountry.flag,
+        climateZone: chosenCountry.climateZone,
+        regionLabel: `${chosenCountry.regionHint}, ${chosenCountry.name}`,
+        soilType: editSoil,
+        slopeOption: editSlope,
+        ...(countryChanged
+          ? {
+              coordinates: { lat: chosenCountry.lat, lng: chosenCountry.lng },
+              boundary: newBoundary,
+            }
+          : {}),
+      },
+      countryChanged || editSoil !== profile.soilType
+    );
+
+    setSavingProfile(false);
+    setProfileModalOpen(false);
   };
 
-  const initials = profile.name
-    .split(' ')
-    .map((p) => p[0])
-    .join('')
-    .slice(0, 2)
-    .toUpperCase();
+  const handleNav = (id: AppScreen) => {
+    navigate(id);
+    setMobileOpen(false);
+  };
 
   return (
     <div className="min-h-screen bg-[#F5F4F0] text-[#111111] flex">
-      {/* Desktop Collapsible Left Sidebar */}
-      <aside
-        className={`hidden lg:flex flex-col bg-[#FFFEFB] border-r border-[#DFDDD6] sticky top-0 h-screen shrink-0 transition-all duration-300 ${
-          collapsed ? 'w-[82px]' : 'w-[264px]'
-        }`}
-      >
-        {/* Brand Header + Collapse Toggle */}
-        <div className="h-[74px] px-4 flex items-center justify-between border-b border-[#EFECE6]">
+      {/* Desktop Left Sidebar */}
+      <aside className="hidden lg:flex lg:flex-col w-[248px] shrink-0 bg-[#FFFEFB] border-r border-[#DFDDD6] sticky top-0 h-screen z-30">
+        <div className="px-5 h-[74px] flex items-center border-b border-[#EFECE6]">
           <button
             type="button"
             onClick={() => navigate('dashboard')}
-            className="cursor-pointer focus:outline-none overflow-hidden"
-            title="Tadawol Dashboard"
+            className="text-left cursor-pointer"
           >
-            <BrandMark
-              size={32}
-              showWordmark={!collapsed}
-              subtitle={!collapsed ? 'Smart AgriTech' : undefined}
-            />
-          </button>
-          <button
-            type="button"
-            onClick={() => setCollapsed((c) => !c)}
-            aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            className="w-8 h-8 rounded-full bg-[#F5F4F0] border border-[#D9D9D9] hover:bg-[#111111] hover:text-white flex items-center justify-center transition cursor-pointer shrink-0"
-          >
-            {collapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
+            <BrandMark />
           </button>
         </div>
 
-        {/* Navigation Links */}
-        <nav className="flex-1 p-3 space-y-1.5 overflow-y-auto">
-          {!collapsed && (
-            <div className="px-3 pt-2 pb-1 text-[10px] font-bold uppercase tracking-[0.14em] text-[#6F6F6F]">
-              Farm Workspace
+        {/* Active Farm Switcher & Multi-Farm Controls */}
+        <div className="px-4 pt-4 pb-2">
+          <div className="bg-[#F5F4F0] rounded-xl p-3 border border-[#E5E3DB] space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-[#00873A]">
+                {farms.length > 1 ? `My Farms (${farms.length})` : 'Active Global Farm'}
+              </span>
+              <span className="text-base leading-none" title={profile.countryName}>
+                {profile.countryFlag}
+              </span>
             </div>
-          )}
-          {NAV_ITEMS.map((item) => {
-            const Icon = item.icon;
-            const active = screen === item.id;
-            const showDot = item.id === 'rotation-lab' && Boolean(pendingProposal);
 
+            {farms.length > 1 ? (
+              <select
+                value={activeFarmId}
+                onChange={(e) => switchFarm(e.target.value)}
+                aria-label="Switch active farm"
+                className="w-full px-2.5 py-1.5 bg-white border border-[#D1D1D1] rounded-lg text-xs font-extrabold text-[#111111] focus:outline-none focus:border-[#00873A] cursor-pointer"
+              >
+                {farms.map((f) => (
+                  <option key={f.id} value={f.id}>
+                    {f.countryFlag} {f.farmName} ({f.areaHectares} ha)
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <div className="text-sm font-bold text-[#111111] truncate">
+                {profile.farmName}
+              </div>
+            )}
+
+            <div className="text-[11px] text-[#6F6F6F] truncate">
+              {profile.countryName} · {profile.areaHectares} ha · {profile.soilType}
+            </div>
+
+            <div className="grid grid-cols-2 gap-1.5 pt-1">
+              <button
+                type="button"
+                onClick={() => openEditFarmModal('location-size')}
+                className="inline-flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-white hover:bg-[#111111] hover:text-white border border-[#D9D9D9] text-[11px] font-bold text-[#111111] transition cursor-pointer"
+              >
+                <Pencil className="w-3 h-3" />
+                Edit Farm
+              </button>
+              <button
+                type="button"
+                onClick={openAddFarmModal}
+                className="inline-flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-[#EBB40E] hover:bg-[#111111] hover:text-white text-[11px] font-extrabold text-[#111111] transition cursor-pointer"
+              >
+                <Plus className="w-3 h-3" />
+                Add Farm
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* 5 Primary Navigation Links */}
+        <nav className="flex-1 px-3 py-3 space-y-1.5 overflow-y-auto">
+          {NAV_ITEMS.map((item) => {
+            const active = screen === item.id;
             return (
               <button
                 key={item.id}
                 type="button"
-                onClick={() => navigate(item.id)}
-                title={collapsed ? item.label : undefined}
-                className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl transition-all cursor-pointer relative ${
+                onClick={() => handleNav(item.id)}
+                className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-left transition cursor-pointer ${
                   active
-                    ? 'bg-[#111111] text-white shadow-sm'
-                    : 'text-[#474747] hover:bg-[#F5F4F0] hover:text-[#111111]'
-                } ${collapsed ? 'justify-center' : ''}`}
+                    ? 'bg-[#00873A] text-white shadow-xs'
+                    : 'text-[#3B3B3B] hover:bg-[#F5F4F0] hover:text-[#111111]'
+                }`}
               >
-                {active && (
-                  <span className="absolute left-0 top-2.5 bottom-2.5 w-1 bg-[#EBB40E] rounded-r-full" />
-                )}
-                <Icon
-                  className={`w-5 h-5 shrink-0 ${
-                    active ? 'text-[#EBB40E]' : 'text-[#474747]'
+                <span
+                  className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                    active ? 'bg-white/15 text-white' : 'bg-[#F5F4F0] text-[#00873A]'
                   }`}
-                />
-                {!collapsed && (
-                  <div className="text-left flex-1 min-w-0">
-                    <div className="text-sm font-bold truncate">{item.label}</div>
-                    <div
-                      className={`text-[11px] truncate ${
-                        active ? 'text-white/70' : 'text-[#6F6F6F]'
-                      }`}
-                    >
-                      {item.shortDesc}
-                    </div>
+                >
+                  {item.icon}
+                </span>
+                <div className="min-w-0">
+                  <div className="text-sm font-bold leading-tight truncate">{item.label}</div>
+                  <div
+                    className={`text-[11px] truncate ${
+                      active ? 'text-white/80' : 'text-[#6F6F6F]'
+                    }`}
+                  >
+                    {item.sub}
                   </div>
-                )}
-                {showDot && (
-                  <span
-                    className="w-2.5 h-2.5 rounded-full bg-[#EBB40E] animate-pulse-harvest shrink-0"
-                    title="Pending strategy approval"
-                  />
-                )}
+                </div>
               </button>
             );
           })}
         </nav>
 
-        {/* Bottom NASA Telemetry Status & Public Landing Link */}
-        <div className="p-3 border-t border-[#EFECE6] space-y-2.5">
-          {!collapsed ? (
-            <div className="bg-[#00873A] text-white rounded-xl p-3.5 space-y-2 relative overflow-hidden">
-              <div className="flex items-center justify-between text-[11px] font-bold">
-                <span className="inline-flex items-center gap-1.5 text-[#92D500]">
-                  <Satellite className="w-3.5 h-3.5" />
-                  NASA SYNC LIVE
-                </span>
-                <span className="font-mono-tech text-white/80">SMAP L4</span>
-              </div>
-              <div className="text-xs font-semibold truncate">{profile.farmName}</div>
-              <div className="flex items-center justify-between text-[11px] text-white/80 font-mono-tech">
-                <span>{profile.areaHectares} ha</span>
-                <span>{profile.soilType}</span>
+        {/* Bottom Satellite Status & Logout */}
+        <div className="p-4 border-t border-[#EFECE6] space-y-2">
+          <button
+            type="button"
+            onClick={() => setIsDataSourcesOpen(true)}
+            className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-[#F5F4F0] hover:bg-[#E3F5EB] border border-[#E2E0D8] text-left transition cursor-pointer"
+          >
+            <div className="flex items-center gap-2 min-w-0">
+              <Satellite className="w-4 h-4 text-[#00873A] shrink-0" />
+              <div className="min-w-0">
+                <div className="text-[11px] font-bold text-[#111111] truncate">
+                  {profile.nasaPower.source === 'nasa-power-live'
+                    ? 'NASA POWER Live'
+                    : 'NASA Baseline Active'}
+                </div>
+                <div className="text-[10px] text-[#6F6F6F] truncate">
+                  SMAP · MODIS · SRTM Directory
+                </div>
               </div>
             </div>
-          ) : (
-            <div
-              className="w-11 h-11 mx-auto rounded-xl bg-[#00873A] text-[#92D500] flex items-center justify-center"
-              title={`NASA Sync Live · ${profile.farmName}`}
-            >
-              <Satellite className="w-5 h-5" />
-            </div>
-          )}
+            <span className="w-2 h-2 rounded-full bg-[#44BE7E] shrink-0" />
+          </button>
 
           <button
             type="button"
-            onClick={() => navigate('landing')}
-            title="Public Homepage"
-            className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-semibold text-[#474747] hover:bg-[#F5F4F0] hover:text-[#111111] transition cursor-pointer ${
-              collapsed ? 'justify-center' : ''
-            }`}
+            onClick={() => setContractModalOpen(true)}
+            className="w-full inline-flex items-center justify-between gap-2 px-3 py-2 rounded-xl border border-[#DFDDD6] bg-white hover:border-[#111111] text-[11px] font-bold text-[#474747] transition cursor-pointer"
           >
-            <Home className="w-4 h-4 shrink-0" />
-            {!collapsed && <span>Public Homepage</span>}
+            <span className="inline-flex items-center gap-1.5">
+              <Code2 className="w-3.5 h-3.5 text-[#00873A]" />
+              API Contract
+            </span>
+            <span className="text-[10px] text-[#00873A]">
+              {contractSource === 'remote-api' ? 'Live' : 'Ready'}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={logout}
+            className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-full border border-[#D9D9D9] text-xs font-semibold text-[#474747] hover:bg-[#111111] hover:text-white hover:border-[#111111] transition cursor-pointer"
+          >
+            <LogOut className="w-3.5 h-3.5" />
+            Log Out
           </button>
         </div>
       </aside>
 
-      {/* Mobile Slide-Over Sidebar Drawer */}
-      {mobileNavOpen && (
-        <div
-          className="lg:hidden fixed inset-0 z-50 bg-[#111111]/60 backdrop-blur-xs flex"
-          onClick={() => setMobileNavOpen(false)}
-        >
+      {/* Mobile Drawer Sidebar */}
+      {mobileOpen && (
+        <div className="fixed inset-0 z-50 lg:hidden flex">
           <div
-            className="w-[280px] max-w-[85vw] bg-[#FFFEFB] h-full flex flex-col justify-between p-4 shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="space-y-4">
-              <div className="flex items-center justify-between pb-3 border-b border-[#EFECE6]">
-                <BrandMark size={30} subtitle="Smart AgriTech" />
+            className="fixed inset-0 bg-[#111111]/60 backdrop-blur-xs"
+            onClick={() => setMobileOpen(false)}
+          />
+          <aside className="relative z-10 w-[275px] max-w-[85vw] bg-[#FFFEFB] h-full flex flex-col shadow-2xl">
+            <div className="px-5 h-[68px] flex items-center justify-between border-b border-[#EFECE6]">
+              <BrandMark />
+              <button
+                type="button"
+                onClick={() => setMobileOpen(false)}
+                className="p-2 rounded-full hover:bg-[#F5F4F0] cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="px-4 pt-3 pb-1 space-y-2 border-b border-[#EFECE6]">
+              {farms.length > 1 ? (
+                <select
+                  value={activeFarmId}
+                  onChange={(e) => {
+                    switchFarm(e.target.value);
+                    setMobileOpen(false);
+                  }}
+                  className="w-full px-2.5 py-2 bg-[#F5F4F0] border border-[#D1D1D1] rounded-lg text-xs font-extrabold text-[#111111]"
+                >
+                  {farms.map((f) => (
+                    <option key={f.id} value={f.id}>
+                      {f.countryFlag} {f.farmName} ({f.areaHectares} ha)
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <div className="text-xs font-extrabold text-[#111111] truncate">
+                  {profile.countryFlag} {profile.farmName} ({profile.areaHectares} ha)
+                </div>
+              )}
+              <div className="grid grid-cols-2 gap-1.5 pb-2">
                 <button
                   type="button"
-                  onClick={() => setMobileNavOpen(false)}
-                  className="w-9 h-9 rounded-full bg-[#F5F4F0] flex items-center justify-center cursor-pointer"
+                  onClick={() => {
+                    setMobileOpen(false);
+                    openEditFarmModal('location-size');
+                  }}
+                  className="inline-flex items-center justify-center gap-1 py-1.5 rounded-lg border border-[#D9D9D9] bg-white text-[11px] font-bold text-[#111111] cursor-pointer"
                 >
-                  <X className="w-4 h-4" />
+                  <Pencil className="w-3 h-3" />
+                  Edit Farm
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMobileOpen(false);
+                    openAddFarmModal();
+                  }}
+                  className="inline-flex items-center justify-center gap-1 py-1.5 rounded-lg bg-[#EBB40E] text-[11px] font-extrabold text-[#111111] cursor-pointer"
+                >
+                  <Plus className="w-3 h-3" />
+                  Add Farm
                 </button>
               </div>
-              <nav className="space-y-1.5">
-                {NAV_ITEMS.map((item) => {
-                  const Icon = item.icon;
-                  const active = screen === item.id;
-                  return (
-                    <button
-                      key={item.id}
-                      type="button"
-                      onClick={() => {
-                        setMobileNavOpen(false);
-                        navigate(item.id);
-                      }}
-                      className={`w-full flex items-center gap-3 px-3.5 py-3 rounded-xl text-left transition cursor-pointer ${
-                        active
-                          ? 'bg-[#111111] text-white'
-                          : 'text-[#474747] hover:bg-[#F5F4F0]'
+            </div>
+            <nav className="flex-1 px-3 py-4 space-y-1.5 overflow-y-auto">
+              {NAV_ITEMS.map((item) => {
+                const active = screen === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => handleNav(item.id)}
+                    className={`w-full flex items-center gap-3 px-3.5 py-3 rounded-xl text-left transition cursor-pointer ${
+                      active ? 'bg-[#00873A] text-white' : 'text-[#3B3B3B] hover:bg-[#F5F4F0]'
+                    }`}
+                  >
+                    <span
+                      className={`w-8 h-8 rounded-lg flex items-center justify-center ${
+                        active ? 'bg-white/15 text-white' : 'bg-[#F5F4F0] text-[#00873A]'
                       }`}
                     >
-                      <Icon className={`w-5 h-5 ${active ? 'text-[#EBB40E]' : ''}`} />
-                      <div>
-                        <div className="text-sm font-bold">{item.label}</div>
-                        <div className={`text-[11px] ${active ? 'text-white/70' : 'text-[#6F6F6F]'}`}>
-                          {item.shortDesc}
-                        </div>
+                      {item.icon}
+                    </span>
+                    <div>
+                      <div className="text-sm font-bold">{item.label}</div>
+                      <div className={`text-[11px] ${active ? 'text-white/80' : 'text-[#6F6F6F]'}`}>
+                        {item.sub}
                       </div>
-                    </button>
-                  );
-                })}
-              </nav>
-            </div>
-
-            <div className="pt-4 border-t border-[#EFECE6] space-y-2">
+                    </div>
+                  </button>
+                );
+              })}
+            </nav>
+            <div className="p-4 border-t border-[#EFECE6] space-y-2">
               <button
                 type="button"
                 onClick={() => {
-                  setMobileNavOpen(false);
-                  navigate('landing');
+                  setMobileOpen(false);
+                  setIsDataSourcesOpen(true);
                 }}
-                className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-semibold text-[#474747] hover:bg-[#F5F4F0]"
+                className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-full bg-[#F5F4F0] text-xs font-bold text-[#111111] cursor-pointer"
               >
-                <Home className="w-4 h-4" />
-                Public Homepage
+                <Satellite className="w-3.5 h-3.5 text-[#00873A]" />
+                Data Sources Directory
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  setMobileNavOpen(false);
-                  logout();
-                }}
-                className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-semibold text-[#B91C1C] hover:bg-red-50"
+                onClick={logout}
+                className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-full border border-[#D9D9D9] text-xs font-semibold text-[#474747] cursor-pointer"
               >
-                <LogOut className="w-4 h-4" />
-                Sign Out
+                <LogOut className="w-3.5 h-3.5" />
+                Log Out
               </button>
             </div>
-          </div>
+          </aside>
         </div>
       )}
 
-      {/* Main App Area */}
-      <div className="flex-1 min-w-0 flex flex-col">
-        {/* Persistent Top Header Bar */}
-        <header className="sticky top-0 z-30 h-[74px] bg-[#FFFEFB]/95 backdrop-blur-md border-b border-[#DFDDD6] px-4 sm:px-7 flex items-center justify-between gap-4">
-          {/* Left: Mobile Trigger + Personalized Greeting */}
-          <div className="flex items-center gap-3.5 min-w-0">
+      {/* Main Content Area — Automatically Resizes Side-by-Side When SplitAiChatbot Expands */}
+      <div className="flex-1 min-w-0 flex flex-col transition-all duration-300">
+        {/* Top Bar: "Hello, [Farmer Name]" + Interactive Profile Photo w/ Country Flag Badge */}
+        <header className="h-[74px] bg-[#FFFEFB]/95 backdrop-blur-sm border-b border-[#DFDDD6] sticky top-0 z-20 px-4 sm:px-6 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
             <button
               type="button"
-              onClick={() => setMobileNavOpen(true)}
-              className="lg:hidden w-10 h-10 rounded-full bg-[#F5F4F0] border border-[#D9D9D9] flex items-center justify-center shrink-0 cursor-pointer"
+              onClick={() => setMobileOpen(true)}
+              className="lg:hidden p-2 rounded-full border border-[#D9D9D9] hover:bg-[#F5F4F0] cursor-pointer shrink-0"
               aria-label="Open menu"
             >
               <Menu className="w-5 h-5" />
             </button>
-
             <div className="min-w-0">
-              <div className="flex items-center gap-2.5">
-                <h1 className="text-base sm:text-xl font-extrabold text-[#111111] truncate">
-                  Hello, {profile.name}
-                </h1>
-                <span className="hidden md:inline-flex items-center gap-1.5 text-[11px] font-bold bg-[#E3F5EB] text-[#005A26] px-2.5 py-0.5 rounded-full border border-[#00873A]/20 shrink-0">
-                  <span className="w-1.5 h-1.5 rounded-full bg-[#00873A]" />
-                  {strategy.name}
+              <h1 className="text-base sm:text-xl font-extrabold text-[#111111] truncate">
+                Hello, {profile.name}
+              </h1>
+              <div className="flex items-center gap-2 text-[11px] sm:text-xs text-[#6F6F6F] truncate">
+                <span>
+                  {profile.countryFlag} {profile.countryName}
                 </span>
-              </div>
-              <div className="text-xs text-[#6F6F6F] truncate flex items-center gap-2">
-                <span className="font-medium text-[#474747]">{profile.farmName}</span>
-                <span className="hidden sm:inline">·</span>
-                <span className="hidden sm:inline">{profile.regionLabel}</span>
-                <span className="hidden md:inline">·</span>
-                <span className="hidden md:inline font-mono-tech">
-                  {profile.coordinates.lat.toFixed(3)}°N, {profile.coordinates.lng.toFixed(3)}°E
-                </span>
+                <span>•</span>
+                <span className="truncate">{profile.farmName}</span>
+                {isFetchingNasa && (
+                  <span className="inline-flex items-center gap-1 text-[#00873A] font-semibold">
+                    <RefreshCw className="w-3 h-3 animate-spin" />
+                    Syncing NASA...
+                  </span>
+                )}
               </div>
             </div>
           </div>
 
-          {/* Right: Pending Approval Indicator + API Contract Button + Circular User Profile Avatar / Menu */}
-          <div className="flex items-center gap-2.5 shrink-0">
+          {/* Right Action Controls */}
+          <div className="flex items-center gap-2 sm:gap-2.5 shrink-0">
+            {/* Split-Screen AI Chatbot Toggle */}
             <button
               type="button"
-              onClick={() => setContractModalOpen(true)}
-              title="Inspect shared contract.json request/response or connect backend API"
-              className="hidden md:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#F5F4F0] hover:bg-[#111111] hover:text-white border border-[#D9D9D9] text-xs font-bold text-[#111111] transition cursor-pointer"
+              onClick={() => setIsChatOpen(!isChatOpen)}
+              className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-bold border transition cursor-pointer ${
+                isChatOpen
+                  ? 'bg-[#111111] text-[#EBB40E] border-[#111111]'
+                  : 'bg-[#EBB40E] text-[#111111] border-[#EBB40E] hover:bg-[#111111] hover:text-white hover:border-[#111111]'
+              }`}
             >
-              <Code2 className="w-3.5 h-3.5 text-[#00873A]" />
-              <span>API Contract</span>
+              <Bot className="w-4 h-4" />
+              <span className="hidden sm:inline">{isChatOpen ? 'AI Split Open' : 'AI Advisor'}</span>
             </button>
 
-            {pendingProposal && screen !== 'rotation-lab' && (
-              <button
-                type="button"
-                onClick={() => navigate('rotation-lab')}
-                className="hidden sm:inline-flex items-center gap-2 bg-[#EBB40E] text-[#111111] px-3.5 py-1.5 rounded-full text-xs font-bold border border-[#111111] animate-pulse-harvest cursor-pointer"
-              >
-                Pending AI Approval · Review
-              </button>
-            )}
+            {/* Quick Refresh Live NASA POWER */}
+            <button
+              type="button"
+              onClick={() => void refreshLiveNasaData()}
+              disabled={isFetchingNasa}
+              title="Refresh live NASA POWER satellite weather & moisture"
+              className="hidden md:inline-flex items-center gap-1.5 px-3 py-2 rounded-full bg-[#F5F4F0] hover:bg-[#E3F5EB] border border-[#D9D9D9] text-xs font-semibold text-[#111111] transition cursor-pointer disabled:opacity-50"
+            >
+              <RefreshCw
+                className={`w-3.5 h-3.5 text-[#00873A] ${isFetchingNasa ? 'animate-spin' : ''}`}
+              />
+              <span>NASA Sync</span>
+            </button>
 
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => setProfileMenuOpen((o) => !o)}
-                className="flex items-center gap-2.5 p-1 pr-3 rounded-full bg-[#F5F4F0] border border-[#D9D9D9] hover:border-[#111111] transition cursor-pointer"
-                aria-label="User profile menu"
-              >
-                <div className="w-9 h-9 rounded-full bg-[#00873A] text-white font-bold text-xs flex items-center justify-center border-2 border-[#EBB40E]">
-                  {initials}
-                </div>
-                <div className="hidden sm:block text-left leading-tight">
-                  <div className="text-xs font-bold text-[#111111] max-w-[120px] truncate">
-                    {profile.name.split(' ')[0]}
-                  </div>
-                  <div className="text-[10px] text-[#6F6F6F]">{profile.soilType}</div>
-                </div>
-              </button>
-
-              {profileMenuOpen && (
-                <>
-                  <div
-                    className="fixed inset-0 z-40"
-                    onClick={() => setProfileMenuOpen(false)}
+            {/* Interactive Profile Photo Icon with Attached Country Flag Badge */}
+            <button
+              type="button"
+              onClick={openProfileSettings}
+              title="Open Profile Settings (Change Photo, Country Flag & Farm Info)"
+              className="relative flex items-center gap-2.5 pl-1 pr-3 py-1 rounded-full bg-[#F5F4F0] hover:bg-[#EFECE6] border border-[#D9D9D9] transition cursor-pointer"
+            >
+              <div className="relative shrink-0">
+                {profile.photoDataUrl ? (
+                  <img
+                    src={profile.photoDataUrl}
+                    alt={profile.name}
+                    className="w-9 h-9 rounded-full object-cover border-2 border-[#00873A]"
                   />
-                  <div className="absolute right-0 mt-2 w-72 bg-[#FFFEFB] border border-[#D9D9D9] rounded-2xl shadow-xl z-50 overflow-hidden animate-fade-in">
-                    <div className="p-4 bg-[#F5F4F0] border-b border-[#E5E3DC]">
-                      <div className="text-sm font-bold text-[#111111]">{profile.name}</div>
-                      <div className="text-xs text-[#6F6F6F] truncate">{profile.email}</div>
-                      <div className="mt-2 flex flex-wrap gap-1.5">
-                        <span className="text-[10px] font-bold bg-white border border-[#D9D9D9] px-2 py-0.5 rounded-full">
-                          {profile.areaHectares} ha
-                        </span>
-                        <span className="text-[10px] font-bold bg-[#E3F5EB] text-[#005A26] px-2 py-0.5 rounded-full">
-                          {profile.soilType}
-                        </span>
-                        <span className="text-[10px] font-bold bg-[#FDF6DC] text-[#7A5B00] px-2 py-0.5 rounded-full">
-                          {profile.irrigationType}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="p-2 space-y-1">
-                      <button
-                        type="button"
-                        onClick={openProfileEditor}
-                        className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-bold text-[#111111] hover:bg-[#F5F4F0] transition cursor-pointer"
-                      >
-                        <Settings className="w-4 h-4 text-[#00873A]" />
-                        Edit Farm Profile &amp; Soil / Resources
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setProfileMenuOpen(false);
-                          resetDemoState();
-                        }}
-                        className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-semibold text-[#474747] hover:bg-[#F5F4F0] transition cursor-pointer"
-                      >
-                        <RotateCcw className="w-4 h-4" />
-                        Reset Demo Baseline Data
-                      </button>
-                      <div className="my-1 border-t border-[#EFECE6]" />
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setProfileMenuOpen(false);
-                          logout();
-                        }}
-                        className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-bold text-[#B91C1C] hover:bg-red-50 transition cursor-pointer"
-                      >
-                        <LogOut className="w-4 h-4" />
-                        Sign Out
-                      </button>
-                    </div>
+                ) : (
+                  <div className="w-9 h-9 rounded-full bg-[#00873A] text-white font-extrabold text-xs flex items-center justify-center border-2 border-white shadow-xs">
+                    {getInitials(profile.name)}
                   </div>
-                </>
-              )}
-            </div>
+                )}
+                {/* Country Flag Badge clearly attached to bottom-right of Profile Icon */}
+                <span
+                  aria-label={`Country: ${profile.countryName}`}
+                  className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-white border border-[#D1D1D1] shadow-sm flex items-center justify-center text-[11px] leading-none"
+                >
+                  {profile.countryFlag}
+                </span>
+              </div>
+              <div className="hidden sm:block text-left leading-tight">
+                <div className="text-xs font-bold text-[#111111] max-w-[115px] truncate">
+                  {profile.name.split(' ')[0]}
+                </div>
+                <div className="text-[10px] text-[#6F6F6F]">Profile &amp; Country</div>
+              </div>
+            </button>
           </div>
         </header>
 
-        {/* Main View Canvas */}
-        <main className="flex-1 p-4 sm:p-6 lg:p-7 max-w-[1440px] w-full mx-auto">
-          {children}
-        </main>
+        {/* Page Main Content */}
+        <main className="flex-1 p-4 sm:p-6 max-w-[1440px] w-full mx-auto">{children}</main>
       </div>
 
-      {/* Shared API Contract Inspector Modal (contract.json) */}
-      <ContractInspectorModal
-        open={contractModalOpen}
-        onClose={() => setContractModalOpen(false)}
-      />
+      {/* Dedicated Resizable Split-Screen AI Chatbot Column (or Compact Dock When Minimized) */}
+      <SplitAiChatbot />
 
-      {/* Edit Farm Profile & Soil/Resource Info Modal */}
-      {editModalOpen && (
+      {/* Toast Notification */}
+      {toastMessage && (
+        <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-[950] max-w-md bg-[#111111] text-white px-5 py-3 rounded-full shadow-2xl border border-[#44BE7E]/40 flex items-center gap-2.5 text-xs sm:text-sm font-medium animate-fade-in">
+          <CheckCircle2 className="w-4 h-4 text-[#92D500] shrink-0" />
+          <span>{toastMessage}</span>
+        </div>
+      )}
+
+      {/* Profile Settings Modal (Upload Photo, Switch Country Flag, Edit Farm, Logout) */}
+      {profileModalOpen && (
         <div
-          className="fixed inset-0 z-50 bg-[#111111]/65 backdrop-blur-xs flex items-center justify-center p-4"
-          onClick={() => setEditModalOpen(false)}
+          className="fixed inset-0 z-[850] bg-[#111111]/65 backdrop-blur-xs flex items-center justify-center p-4"
+          onClick={() => setProfileModalOpen(false)}
         >
           <div
-            className="bg-[#FFFEFB] border border-[#D9D9D9] rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto p-6 sm:p-8 shadow-2xl animate-fade-in"
+            className="bg-[#FFFEFB] border border-[#D9D9D9] rounded-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto shadow-2xl animate-fade-in"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between pb-4 border-b border-[#EFECE6]">
-              <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 rounded-full bg-[#EBB40E] flex items-center justify-center">
-                  <User className="w-4 h-4 text-[#111111]" />
+            <div className="px-6 py-4 bg-[#00873A] text-white flex items-center justify-between">
+              <div>
+                <div className="text-[10px] font-bold uppercase tracking-widest text-[#92D500]">
+                  Farmer Account
                 </div>
-                <div>
-                  <h2 className="text-lg font-bold text-[#111111]">
-                    Edit Farm Profile &amp; Resources
-                  </h2>
-                  <p className="text-xs text-[#6F6F6F]">
-                    Changes automatically recalibrate your NASA baseline &amp; AI recommendations.
-                  </p>
-                </div>
+                <h3 className="text-lg font-extrabold text-white">Profile &amp; Country Settings</h3>
               </div>
               <button
                 type="button"
-                onClick={() => setEditModalOpen(false)}
-                className="w-8 h-8 rounded-full bg-[#F5F4F0] hover:bg-[#111111] hover:text-white flex items-center justify-center transition cursor-pointer"
+                onClick={() => setProfileModalOpen(false)}
+                className="w-8 h-8 rounded-full bg-white/15 hover:bg-white hover:text-[#111111] flex items-center justify-center transition cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <form onSubmit={handleSaveProfile} className="mt-5 space-y-5">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <form onSubmit={handleSaveProfile} className="p-6 space-y-5">
+              {/* Profile Photo Upload with Instant Live Preview & Attached Flag */}
+              <div className="flex items-center gap-4 p-4 rounded-xl bg-[#F5F4F0] border border-[#E2E0D8]">
+                <div className="relative shrink-0">
+                  {editPhoto ? (
+                    <img
+                      src={editPhoto}
+                      alt="Profile preview"
+                      className="w-16 h-16 rounded-full object-cover border-2 border-[#00873A]"
+                    />
+                  ) : (
+                    <div className="w-16 h-16 rounded-full bg-[#00873A] text-white font-extrabold text-lg flex items-center justify-center border-2 border-white">
+                      {getInitials(editName)}
+                    </div>
+                  )}
+                  <span className="absolute -bottom-1 -right-1 w-7 h-7 rounded-full bg-white border border-[#D1D1D1] shadow flex items-center justify-center text-sm">
+                    {GLOBAL_COUNTRIES.find((c) => c.code === editCountryCode)?.flag ??
+                      profile.countryFlag}
+                  </span>
+                </div>
+
+                <div className="flex-1 space-y-1.5">
+                  <div className="text-xs font-bold text-[#111111]">Profile Photo</div>
+                  <div className="flex flex-wrap gap-2">
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept="image/*"
+                      onChange={handlePhotoUpload}
+                      className="hidden"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#EBB40E] hover:bg-[#111111] hover:text-white text-xs font-bold text-[#111111] transition cursor-pointer"
+                    >
+                      <Camera className="w-3.5 h-3.5" />
+                      Upload Photo
+                    </button>
+                    {editPhoto && (
+                      <button
+                        type="button"
+                        onClick={() => setEditPhoto(undefined)}
+                        className="px-3 py-1.5 rounded-full bg-white border border-[#D1D1D1] text-xs font-semibold text-[#474747] hover:border-[#111111] cursor-pointer"
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-[#6F6F6F]">
+                    Instant preview — your selected country flag badge stays attached.
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-bold uppercase tracking-wider text-[#474747] mb-1.5">
-                    Farmer Name
-                  </label>
+                  <label className="block text-xs font-bold text-[#111111] mb-1">Full Name</label>
                   <input
-                    required
                     type="text"
+                    required
                     value={editName}
                     onChange={(e) => setEditName(e.target.value)}
-                    className="w-full px-3.5 py-2.5 bg-white border border-[#D1D1D1] rounded-lg text-sm focus:outline-none focus:border-[#00873A]"
+                    className="w-full px-3 py-2 bg-[#F5F4F0] border border-[#D1D1D1] rounded-xl text-sm focus:outline-none focus:bg-white focus:border-[#00873A]"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold uppercase tracking-wider text-[#474747] mb-1.5">
-                    Farm / Estate Name
-                  </label>
+                  <label className="block text-xs font-bold text-[#111111] mb-1">Farm Name</label>
                   <input
-                    required
                     type="text"
+                    required
                     value={editFarmName}
                     onChange={(e) => setEditFarmName(e.target.value)}
-                    className="w-full px-3.5 py-2.5 bg-white border border-[#D1D1D1] rounded-lg text-sm focus:outline-none focus:border-[#00873A]"
+                    className="w-full px-3 py-2 bg-[#F5F4F0] border border-[#D1D1D1] rounded-xl text-sm focus:outline-none focus:bg-white focus:border-[#00873A]"
                   />
                 </div>
               </div>
 
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-[#474747] mb-2">
-                  Soil Type
+              {/* Searchable Country Switcher */}
+              <div className="space-y-1.5">
+                <label className="block text-xs font-bold text-[#111111]">
+                  Country (Updates Flag Badge &amp; Regional NASA Data)
                 </label>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                  {SOIL_TYPES.map((st) => (
-                    <button
-                      key={st}
-                      type="button"
-                      onClick={() => setEditSoil(st)}
-                      className={`px-3 py-2 rounded-lg text-xs font-semibold border flex items-center justify-between cursor-pointer ${
-                        editSoil === st
-                          ? 'bg-[#00873A] text-white border-[#00873A]'
-                          : 'bg-white text-[#474747] border-[#D1D1D1]'
-                      }`}
-                    >
-                      <span>{st}</span>
-                      {editSoil === st && <Check className="w-3.5 h-3.5" />}
-                    </button>
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 text-[#6F6F6F] absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={countrySearch}
+                    onChange={(e) => setCountrySearch(e.target.value)}
+                    placeholder="Filter countries..."
+                    className="w-full pl-8 pr-3 py-1.5 bg-[#F5F4F0] border border-[#D1D1D1] rounded-t-xl text-xs focus:outline-none focus:bg-white"
+                  />
+                </div>
+                <select
+                  value={editCountryCode}
+                  onChange={(e) => setEditCountryCode(e.target.value)}
+                  className="w-full px-3 py-2 bg-white border border-t-0 border-[#D1D1D1] rounded-b-xl text-sm font-medium focus:outline-none focus:border-[#00873A]"
+                >
+                  {filteredCountries.map((c) => (
+                    <option key={c.code} value={c.code}>
+                      {c.flag} {c.name} ({c.climateZone})
+                    </option>
                   ))}
-                </div>
+                </select>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-bold uppercase tracking-wider text-[#474747] mb-1.5">
-                    Irrigation Type
-                  </label>
+                  <label className="block text-xs font-bold text-[#111111] mb-1">Soil Type</label>
                   <select
-                    value={editIrrigation}
-                    onChange={(e) => setEditIrrigation(e.target.value as IrrigationType)}
-                    className="w-full px-3 py-2.5 bg-white border border-[#D1D1D1] rounded-lg text-sm font-medium focus:outline-none focus:border-[#00873A]"
+                    value={editSoil}
+                    onChange={(e) => setEditSoil(e.target.value as SoilType)}
+                    className="w-full px-3 py-2 bg-[#F5F4F0] border border-[#D1D1D1] rounded-xl text-sm focus:outline-none focus:bg-white focus:border-[#00873A]"
                   >
-                    {IRRIGATION_TYPES.map((ir) => (
-                      <option key={ir} value={ir}>
-                        {ir}
+                    {SOIL_TYPES.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
                       </option>
                     ))}
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs font-bold uppercase tracking-wider text-[#474747] mb-1.5">
-                    Water Access
+                  <label className="block text-xs font-bold text-[#111111] mb-1">
+                    Field Slope
                   </label>
                   <select
-                    value={editWater}
-                    onChange={(e) => setEditWater(e.target.value as WaterAccessLevel)}
-                    className="w-full px-3 py-2.5 bg-white border border-[#D1D1D1] rounded-lg text-sm font-medium focus:outline-none focus:border-[#00873A]"
+                    value={editSlope}
+                    onChange={(e) => setEditSlope(e.target.value as SlopeOption)}
+                    className="w-full px-3 py-2 bg-[#F5F4F0] border border-[#D1D1D1] rounded-xl text-sm focus:outline-none focus:bg-white focus:border-[#00873A]"
                   >
-                    {WATER_ACCESS_LEVELS.map((wa) => (
-                      <option key={wa} value={wa}>
-                        {wa}
+                    {SLOPE_OPTIONS.map((sl) => (
+                      <option key={sl} value={sl}>
+                        {sl}
                       </option>
                     ))}
                   </select>
                 </div>
               </div>
 
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-[#474747] mb-2">
-                  Equipment &amp; Sensors
-                </label>
-                <div className="flex flex-wrap gap-2">
-                  {EQUIPMENT_OPTIONS.map((eq) => {
-                    const active = editEquipment.includes(eq);
-                    return (
-                      <button
-                        key={eq}
-                        type="button"
-                        onClick={() =>
-                          setEditEquipment((prev) =>
-                            prev.includes(eq) ? prev.filter((x) => x !== eq) : [...prev, eq]
-                          )
-                        }
-                        className={`px-3 py-1.5 rounded-full text-xs font-semibold border cursor-pointer ${
-                          active
-                            ? 'bg-[#111111] text-white border-[#111111]'
-                            : 'bg-[#F5F4F0] text-[#474747] border-[#D9D9D9]'
-                        }`}
-                      >
-                        {active ? '✓ ' : '+ '}
-                        {eq}
-                      </button>
-                    );
-                  })}
+              <div className="p-3 rounded-xl bg-[#E3F5EB]/60 border border-[#B8E5CC] flex flex-wrap items-center justify-between gap-2">
+                <div className="text-xs text-[#005A26] font-semibold">
+                  Need to resize your parcel, move its pin, or add another farm?
                 </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-[#474747] mb-2">
-                  Previous Crop History
-                </label>
-                <div className="flex flex-wrap gap-2">
-                  {PREVIOUS_CROP_OPTIONS.map((crop) => {
-                    const active = editPrevCrops.includes(crop);
-                    return (
-                      <button
-                        key={crop}
-                        type="button"
-                        onClick={() =>
-                          setEditPrevCrops((prev) =>
-                            prev.includes(crop) ? prev.filter((x) => x !== crop) : [...prev, crop]
-                          )
-                        }
-                        className={`px-3 py-1.5 rounded-full text-xs font-semibold border cursor-pointer ${
-                          active
-                            ? 'bg-[#EBB40E] text-[#111111] border-[#111111]'
-                            : 'bg-white text-[#474747] border-[#D1D1D1]'
-                        }`}
-                      >
-                        {crop}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div className="pt-4 border-t border-[#EFECE6] flex items-center justify-end gap-3">
                 <button
                   type="button"
-                  onClick={() => setEditModalOpen(false)}
-                  className="px-5 py-2.5 rounded-full border border-[#D1D1D1] text-sm font-semibold text-[#474747] hover:border-[#111111] cursor-pointer"
+                  onClick={() => {
+                    setProfileModalOpen(false);
+                    openEditFarmModal('location-size');
+                  }}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-[#00873A] text-white text-[11px] font-bold hover:bg-[#111111] transition cursor-pointer"
                 >
-                  Cancel
+                  <MapPin className="w-3 h-3" />
+                  Edit Map &amp; Size
                 </button>
-                <button type="submit" className="btn-harvest !min-h-[42px]">
-                  Save Profile Changes
+              </div>
+
+              <div className="pt-3 border-t border-[#EFECE6] flex flex-wrap items-center justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setProfileModalOpen(false);
+                    logout();
+                  }}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full border border-[#D9D9D9] text-xs font-bold text-[#B83B1A] hover:bg-[#FCEBE6] transition cursor-pointer"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                  Log Out
                 </button>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setProfileModalOpen(false)}
+                    className="px-4 py-2 rounded-full border border-[#D9D9D9] text-xs font-bold text-[#474747] cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={savingProfile}
+                    className="btn-pill btn-pill-primary text-xs !px-5 !py-2.5 disabled:opacity-60"
+                  >
+                    <Upload className="w-3.5 h-3.5" />
+                    {savingProfile ? 'Syncing NASA...' : 'Save Changes'}
+                  </button>
+                </div>
               </div>
             </form>
           </div>
         </div>
       )}
+
+      {/* Multi-Farm Add / Partial Edit Modal */}
+      <FarmManagerModal />
+
+      {/* Global Categorized 3-Phase Data Sources & Official Satellite Portals Modal */}
+      <DataSourcesModal
+        open={isDataSourcesOpen}
+        onClose={() => setIsDataSourcesOpen(false)}
+        liveNasaStatus={profile.nasaPower.source}
+      />
+
+      {/* Shared contract.json Inspector Modal */}
+      <ContractInspectorModal
+        open={contractModalOpen}
+        onClose={() => setContractModalOpen(false)}
+      />
     </div>
   );
 };

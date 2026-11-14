@@ -1,24 +1,18 @@
 import React, { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
-import {
-  computePolygonAreaHectares,
-  CROPS,
-  getPolygonCenter,
-  subdivideBoundaryInto4Zones,
-  ZONE_IDS,
-} from '../data/agronomyData';
-import { ZoneDiff, ZoneId } from '../types/farm';
-import { Layers, MapPin, PenTool, RotateCcw, Check, Move } from 'lucide-react';
+import { computePolygonAreaHectares, getPolygonCenter } from '../data/agronomyData';
+import { Check, Layers, MapPin, Move, PenTool, RotateCcw } from 'lucide-react';
 
-export interface MapZoneDisplay {
-  zoneId: ZoneId;
-  cropId: string;
-  ndvi: number;
-  soilMoisturePct: number;
-  nitrogenKgHa?: number;
-  healthScore?: number;
-  yieldTha?: number;
-  subtitle?: string;
+export interface UnifiedFieldOverlay {
+  cropName: string;
+  cropColor: string;
+  stageLabel?: string;
+  topBadge?: string;
+  bottomMetric?: string;
+  moisturePct?: number;
+  ndvi?: number;
+  soilRichnessScore?: number;
+  chemicalReductionPct?: number;
 }
 
 interface FarmLeafletMapProps {
@@ -26,28 +20,23 @@ interface FarmLeafletMapProps {
   center: [number, number];
   boundary: [number, number][];
   heightClass?: string;
-  zones?: Record<ZoneId, MapZoneDisplay>;
-  overlayMode?: 'strategy' | 'ndvi' | 'moisture';
-  selectedZone?: ZoneId | null;
-  onSelectZone?: (zoneId: ZoneId) => void;
-  pendingDiffs?: ZoneDiff[];
-  // Onboarding callbacks
+  fieldOverlay?: UnifiedFieldOverlay;
+  overlayMode?: 'crop' | 'moisture' | 'health';
   onChangeLocation?: (lat: number, lng: number) => void;
   onChangeBoundary?: (newBoundary: [number, number][]) => void;
 }
 
-function getNdviColor(ndvi: number): string {
-  if (ndvi >= 0.78) return '#00873A';
-  if (ndvi >= 0.7) return '#39A958';
-  if (ndvi >= 0.62) return '#92D500';
-  if (ndvi >= 0.55) return '#EBB40E';
-  return '#D96B27';
+function getMoistureShade(moisturePct: number): string {
+  if (moisturePct >= 68) return '#0A6E8A';
+  if (moisturePct >= 50) return '#1696A8';
+  if (moisturePct >= 35) return '#44BE7E';
+  return '#EBB40E';
 }
 
-function getMoistureColor(moisturePct: number): string {
-  if (moisturePct >= 38) return '#0A6E8A';
-  if (moisturePct >= 31) return '#1696A8';
-  if (moisturePct >= 25) return '#44BE7E';
+function getHealthShade(ndvi: number): string {
+  if (ndvi >= 0.72) return '#00873A';
+  if (ndvi >= 0.6) return '#44BE7E';
+  if (ndvi >= 0.5) return '#92D500';
   return '#EBB40E';
 }
 
@@ -55,12 +44,9 @@ export const FarmLeafletMap: React.FC<FarmLeafletMapProps> = ({
   mode,
   center,
   boundary,
-  heightClass = 'h-[400px]',
-  zones,
-  overlayMode = 'strategy',
-  selectedZone = null,
-  onSelectZone,
-  pendingDiffs = [],
+  heightClass = 'h-[390px]',
+  fieldOverlay,
+  overlayMode = 'crop',
   onChangeLocation,
   onChangeBoundary,
 }) => {
@@ -68,8 +54,8 @@ export const FarmLeafletMap: React.FC<FarmLeafletMapProps> = ({
   const mapRef = useRef<L.Map | null>(null);
   const tileLayerRef = useRef<L.TileLayer | null>(null);
   const overlayGroupRef = useRef<L.LayerGroup | null>(null);
-  const lastFitRegionRef = useRef<string>('');
-  const isDraggingHandleRef = useRef<boolean>(false);
+  const lastRegionKeyRef = useRef<string>('');
+  const isDraggingRef = useRef<boolean>(false);
 
   const [basemap, setBasemap] = useState<'satellite' | 'street'>('satellite');
   const [toolMode, setToolMode] = useState<'resize' | 'pin' | 'draw'>('resize');
@@ -121,18 +107,13 @@ export const FarmLeafletMap: React.FC<FarmLeafletMapProps> = ({
 
     const attribution =
       basemap === 'satellite'
-        ? 'Imagery &copy; Esri · NASA SMAP Overlay'
-        : '&copy; OpenStreetMap · Tadawol GIS';
+        ? 'Satellite &copy; Esri · NASA POWER Linked'
+        : '&copy; OpenStreetMap · Tadawol Global';
 
-    const layer = L.tileLayer(url, {
-      maxZoom: 19,
-      attribution,
-    }).addTo(map);
-
-    tileLayerRef.current = layer;
+    tileLayerRef.current = L.tileLayer(url, { maxZoom: 19, attribution }).addTo(map);
   }, [basemap]);
 
-  // Handle onboarding map click events (relocate pin or draw custom boundary corners)
+  // Onboarding click handler (relocate or draw custom field boundary)
   useEffect(() => {
     const map = mapRef.current;
     if (!map || mode !== 'onboarding') return;
@@ -153,7 +134,7 @@ export const FarmLeafletMap: React.FC<FarmLeafletMapProps> = ({
     };
   }, [mode, toolMode, onChangeLocation]);
 
-  // Sync map overlays
+  // Draw unified single-surface field overlays
   useEffect(() => {
     const map = mapRef.current;
     const group = overlayGroupRef.current;
@@ -161,10 +142,10 @@ export const FarmLeafletMap: React.FC<FarmLeafletMapProps> = ({
 
     group.clearLayers();
 
-    // Fit viewport smoothly only when center moves meaningfully (not during corner handle drags!)
-    const regionKey = `${center[0].toFixed(2)},${center[1].toFixed(2)}`;
-    if (!isDraggingHandleRef.current && lastFitRegionRef.current !== regionKey && boundary.length >= 3) {
-      lastFitRegionRef.current = regionKey;
+    const areaKey = computePolygonAreaHectares(boundary).toFixed(1);
+    const regionKey = `${center[0].toFixed(3)},${center[1].toFixed(3)},${areaKey}`;
+    if (!isDraggingRef.current && lastRegionKeyRef.current !== regionKey && boundary.length >= 3) {
+      lastRegionKeyRef.current = regionKey;
       try {
         const bounds = L.latLngBounds(boundary.map(([la, ln]) => L.latLng(la, ln)));
         map.fitBounds(bounds, { padding: [52, 52], maxZoom: 16, animate: true });
@@ -174,7 +155,6 @@ export const FarmLeafletMap: React.FC<FarmLeafletMapProps> = ({
     }
 
     if (mode === 'onboarding') {
-      // Single unified farm area boundary — NO 4-part S1–S4 subdivision during registration!
       if (boundary.length >= 3) {
         const liveCoords: [number, number][] = boundary.map((p) => [...p] as [number, number]);
         const areaHa = computePolygonAreaHectares(liveCoords);
@@ -187,7 +167,6 @@ export const FarmLeafletMap: React.FC<FarmLeafletMapProps> = ({
           dashArray: toolMode === 'draw' && draftPoints.length > 0 ? '6 6' : undefined,
         }).addTo(group);
 
-        // Centered unified Farm Area badge (draggable in resize/pin mode to move whole parcel!)
         const polyCenter = getPolygonCenter(liveCoords);
         const areaMarker = L.marker(polyCenter, {
           draggable: toolMode !== 'draw',
@@ -197,17 +176,16 @@ export const FarmLeafletMap: React.FC<FarmLeafletMapProps> = ({
               <div style="background:rgba(17,17,17,0.92);color:#FFFFFF;font-size:12px;font-weight:800;padding:5px 12px;border-radius:999px;border:2px solid #EBB40E;white-space:nowrap;box-shadow:0 6px 18px rgba(0,0,0,0.34);">
                 ${areaHa.toFixed(1)} ha
               </div>
-              <div style="background:rgba(255,254,251,0.92);color:#111111;font-size:10px;font-weight:700;padding:1px 7px;border-radius:999px;white-space:nowrap;">
-                Farm Area
+              <div style="background:rgba(255,254,251,0.94);color:#111111;font-size:10px;font-weight:700;padding:1px 7px;border-radius:999px;white-space:nowrap;">
+                Your Farm Surface
               </div>
             </div>`,
           }),
         }).addTo(group);
 
-        // Allow dragging the center badge to shift the entire farm parcel while preserving area & shape
         let dragStartCenter: [number, number] | null = null;
         areaMarker.on('dragstart', () => {
-          isDraggingHandleRef.current = true;
+          isDraggingRef.current = true;
           dragStartCenter = [...polyCenter];
         });
         areaMarker.on('drag', (ev) => {
@@ -230,11 +208,10 @@ export const FarmLeafletMap: React.FC<FarmLeafletMapProps> = ({
           );
           onChangeBoundary?.(shifted);
           setTimeout(() => {
-            isDraggingHandleRef.current = false;
+            isDraggingRef.current = false;
           }, 80);
         });
 
-        // Draggable Corner Resize Handles so farmer can directly resize/reshape the farm on the map!
         if (toolMode !== 'draw') {
           liveCoords.forEach((pt, idx) => {
             const cornerMarker = L.marker(pt, {
@@ -245,15 +222,11 @@ export const FarmLeafletMap: React.FC<FarmLeafletMapProps> = ({
               }),
             }).addTo(group);
 
-            cornerMarker.bindTooltip('Drag corner to resize farm', {
-              direction: 'top',
-              offset: [0, -10],
-            });
+            cornerMarker.bindTooltip('Drag corner to resize', { direction: 'top', offset: [0, -10] });
 
             cornerMarker.on('dragstart', () => {
-              isDraggingHandleRef.current = true;
+              isDraggingRef.current = true;
             });
-
             cornerMarker.on('drag', (ev) => {
               const pos = (ev.target as L.Marker).getLatLng();
               liveCoords[idx] = [Number(pos.lat.toFixed(6)), Number(pos.lng.toFixed(6))];
@@ -266,35 +239,26 @@ export const FarmLeafletMap: React.FC<FarmLeafletMapProps> = ({
                 L.divIcon({
                   className: 'zone-label-icon',
                   html: `<div style="transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;gap:2px;">
-                    <div style="background:rgba(17,17,17,0.95);color:#92D500;font-size:12px;font-weight:800;padding:5px 12px;border-radius:999px;border:2px solid #EBB40E;white-space:nowrap;box-shadow:0 6px 18px rgba(0,0,0,0.34);">
+                    <div style="background:rgba(17,17,17,0.95);color:#92D500;font-size:12px;font-weight:800;padding:5px 12px;border-radius:999px;border:2px solid #EBB40E;white-space:nowrap;">
                       ${updatedArea.toFixed(1)} ha
-                    </div>
-                    <div style="background:rgba(255,254,251,0.92);color:#111111;font-size:10px;font-weight:700;padding:1px 7px;border-radius:999px;white-space:nowrap;">
-                      Resizing...
                     </div>
                   </div>`,
                 })
               );
             });
-
             cornerMarker.on('dragend', () => {
               onChangeBoundary?.(liveCoords.map((c) => [...c] as [number, number]));
               setTimeout(() => {
-                isDraggingHandleRef.current = false;
+                isDraggingRef.current = false;
               }, 80);
             });
           });
         }
       }
 
-      // Render custom draft drawing vertices when in Draw mode
       if (draftPoints.length > 0) {
         if (draftPoints.length >= 2) {
-          L.polyline(draftPoints, {
-            color: '#92D500',
-            weight: 3,
-            dashArray: '6 4',
-          }).addTo(group);
+          L.polyline(draftPoints, { color: '#92D500', weight: 3, dashArray: '6 4' }).addTo(group);
         }
         if (draftPoints.length >= 3) {
           L.polygon(draftPoints, {
@@ -319,105 +283,73 @@ export const FarmLeafletMap: React.FC<FarmLeafletMapProps> = ({
       return;
     }
 
-    // Authenticated modes: dashboard, history, rotation-lab (4-zone S1–S4 overlay)
+    // UNIFIED SINGLE-SURFACE FIELD OVERLAY for Dashboard, History & Rotation Lab (Zero 4-part split!)
     if (boundary.length >= 3) {
+      const cropColor = fieldOverlay?.cropColor ?? '#00873A';
+      let fillColor = cropColor;
+      if (overlayMode === 'moisture' && fieldOverlay?.moisturePct !== undefined) {
+        fillColor = getMoistureShade(fieldOverlay.moisturePct);
+      } else if (overlayMode === 'health' && fieldOverlay?.ndvi !== undefined) {
+        fillColor = getHealthShade(fieldOverlay.ndvi);
+      }
+
+      // Outer subtle glow ring for Rotation Lab soil-enrichment visual
+      if (mode === 'rotation-lab') {
+        L.polygon(boundary, {
+          color: '#EBB40E',
+          weight: 7,
+          opacity: 0.35,
+          fillOpacity: 0,
+        }).addTo(group);
+      }
+
+      // Single unified land surface polygon
       L.polygon(boundary, {
         color: '#FFFFFF',
-        weight: 2.5,
-        opacity: 0.9,
-        fillOpacity: 0,
+        weight: 3,
+        fillColor,
+        fillOpacity: 0.56,
       }).addTo(group);
 
-      const quads = subdivideBoundaryInto4Zones(boundary);
+      const polyCenter = getPolygonCenter(boundary);
+      const cropTitle = fieldOverlay?.cropName ?? 'Active Crop';
+      const topBadge = fieldOverlay?.topBadge ?? '';
+      const subLine =
+        fieldOverlay?.bottomMetric ??
+        fieldOverlay?.stageLabel ??
+        `${computePolygonAreaHectares(boundary).toFixed(1)} ha Unified Field`;
 
-      ZONE_IDS.forEach((zoneId) => {
-        const zData = zones?.[zoneId];
-        if (!zData) return;
-        const crop = CROPS[zData.cropId] ?? CROPS.durum_wheat;
-        const diff = pendingDiffs.find((d) => d.zoneId === zoneId);
-        const proposedCrop = diff ? CROPS[diff.toCropId] : null;
-        const isSelected = selectedZone === zoneId;
+      const centerHtml = `<div style="transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;gap:5px;pointer-events:none;">
+        ${
+          topBadge
+            ? `<div style="background:#EBB40E;color:#111111;font-size:10px;font-weight:800;padding:2.5px 10px;border-radius:999px;border:1.5px solid #111111;letter-spacing:0.04em;white-space:nowrap;box-shadow:0 4px 12px rgba(0,0,0,0.28);">${topBadge}</div>`
+            : ''
+        }
+        <div style="display:inline-flex;align-items:center;gap:7px;background:rgba(255,254,251,0.97);color:#111111;padding:6px 14px;border-radius:999px;border:2px solid #111111;box-shadow:0 8px 22px rgba(0,0,0,0.28);white-space:nowrap;">
+          <span style="display:inline-block;width:10px;height:10px;border-radius:999px;background:${fillColor};border:1px solid rgba(0,0,0,0.2);"></span>
+          <span style="font-size:13px;font-weight:800;">${cropTitle}</span>
+        </div>
+        <div style="background:rgba(17,17,17,0.88);color:#F5F4F0;font-size:11px;font-weight:700;padding:3px 11px;border-radius:999px;white-space:nowrap;box-shadow:0 4px 12px rgba(0,0,0,0.22);">
+          ${subLine}
+        </div>
+      </div>`;
 
-        let fillColor = crop.color;
-        if (overlayMode === 'ndvi') fillColor = getNdviColor(zData.ndvi);
-        if (overlayMode === 'moisture') fillColor = getMoistureColor(zData.soilMoisturePct);
-        if (mode === 'rotation-lab' && proposedCrop) fillColor = proposedCrop.color;
-
-        const poly = L.polygon(quads[zoneId], {
-          color: diff ? '#EBB40E' : isSelected ? '#111111' : '#FFFFFF',
-          weight: diff ? 4 : isSelected ? 3.5 : 2,
-          dashArray: diff ? '7 5' : undefined,
-          fillColor,
-          fillOpacity: isSelected ? 0.68 : diff ? 0.62 : 0.54,
-        }).addTo(group);
-
-        poly.on('click', () => {
-          onSelectZone?.(zoneId);
-        });
-
-        poly.on('mouseover', () => {
-          poly.setStyle({ fillOpacity: 0.74 });
-        });
-        poly.on('mouseout', () => {
-          poly.setStyle({ fillOpacity: isSelected ? 0.68 : diff ? 0.62 : 0.54 });
-        });
-
-        const metricChip =
-          overlayMode === 'ndvi'
-            ? `NDVI ${zData.ndvi.toFixed(2)}`
-            : overlayMode === 'moisture'
-              ? `SMAP ${zData.soilMoisturePct}%`
-              : mode === 'history' && zData.yieldTha !== undefined
-                ? `${zData.yieldTha} t/ha`
-                : zData.healthScore !== undefined
-                  ? `Health ${zData.healthScore}%`
-                  : `NDVI ${zData.ndvi.toFixed(2)}`;
-
-        const qCenter = getPolygonCenter(quads[zoneId]);
-        const labelHtml =
-          diff && proposedCrop
-            ? `<div style="transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer;">
-               <div style="background:#EBB40E;color:#111111;font-size:10px;font-weight:800;padding:2px 8px;border-radius:999px;border:1.5px solid #111111;letter-spacing:0.04em;box-shadow:0 4px 10px rgba(0,0,0,0.28);white-space:nowrap;">
-                 ${zoneId} · PROPOSED
-               </div>
-               <div style="background:rgba(17,17,17,0.92);color:#FFFFFF;font-size:11px;font-weight:700;padding:4px 9px;border-radius:8px;border:1px solid #EBB40E;white-space:nowrap;box-shadow:0 4px 12px rgba(0,0,0,0.3);">
-                 ${proposedCrop.name}
-               </div>
-             </div>`
-            : `<div style="transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;gap:2px;cursor:pointer;">
-               <div style="display:inline-flex;align-items:center;gap:5px;background:${isSelected ? '#111111' : 'rgba(255,254,251,0.95)'};color:${isSelected ? '#FFFFFF' : '#111111'};padding:4px 10px;border-radius:999px;border:1.5px solid ${isSelected ? '#EBB40E' : 'rgba(17,17,17,0.2)'};box-shadow:0 4px 12px rgba(0,0,0,0.24);white-space:nowrap;">
-                 <span style="display:inline-block;width:8px;height:8px;border-radius:999px;background:${fillColor};"></span>
-                 <span style="font-size:11px;font-weight:800;">${zoneId}</span>
-                 <span style="font-size:11px;font-weight:600;">${crop.name}</span>
-               </div>
-               <div style="background:rgba(17,17,17,0.78);color:#F5F4F0;font-size:10px;font-weight:600;padding:1.5px 7px;border-radius:999px;white-space:nowrap;">
-                 ${metricChip}
-               </div>
-             </div>`;
-
-        const labelMarker = L.marker(qCenter, {
-          icon: L.divIcon({
-            className: 'zone-label-icon',
-            html: labelHtml,
-          }),
-        }).addTo(group);
-
-        labelMarker.on('click', () => {
-          onSelectZone?.(zoneId);
-        });
-      });
+      L.marker(polyCenter, {
+        interactive: false,
+        icon: L.divIcon({
+          className: 'zone-label-icon',
+          html: centerHtml,
+        }),
+      }).addTo(group);
     }
   }, [
     mode,
     center,
     boundary,
-    zones,
+    fieldOverlay,
     overlayMode,
-    selectedZone,
-    pendingDiffs,
     toolMode,
     draftPoints,
-    onSelectZone,
     onChangeBoundary,
   ]);
 
@@ -435,8 +367,8 @@ export const FarmLeafletMap: React.FC<FarmLeafletMapProps> = ({
     >
       <div ref={containerRef} className="w-full h-full" />
 
-      {/* Top-right basemap switcher */}
-      <div className="absolute top-3 right-3 z-[400] flex items-center gap-1.5 bg-[#FFFEFB]/95 backdrop-blur-sm p-1 rounded-full border border-[#D9D9D9] shadow-sm">
+      {/* Basemap Switcher */}
+      <div className="absolute top-3 right-3 z-[400] flex items-center gap-1 bg-[#FFFEFB]/95 backdrop-blur-sm p-1 rounded-full border border-[#D9D9D9] shadow-sm">
         <button
           type="button"
           onClick={() => setBasemap('satellite')}
@@ -462,7 +394,7 @@ export const FarmLeafletMap: React.FC<FarmLeafletMapProps> = ({
         </button>
       </div>
 
-      {/* Onboarding single-parcel resize & outline tools (top-left) */}
+      {/* Onboarding Tools */}
       {mode === 'onboarding' && (
         <div className="absolute top-3 left-3 z-[400] flex flex-wrap items-center gap-1.5 max-w-[calc(100%-175px)]">
           <div className="inline-flex items-center bg-[#FFFEFB]/95 backdrop-blur-sm p-1 rounded-full border border-[#D9D9D9] shadow-sm">
@@ -494,7 +426,7 @@ export const FarmLeafletMap: React.FC<FarmLeafletMapProps> = ({
               }`}
             >
               <MapPin className="w-3.5 h-3.5" />
-              Relocate
+              Drop Pin
             </button>
             <button
               type="button"
@@ -535,7 +467,7 @@ export const FarmLeafletMap: React.FC<FarmLeafletMapProps> = ({
                   type="button"
                   onClick={() => setDraftPoints([])}
                   className="p-0.5 text-white/80 hover:text-white cursor-pointer"
-                  title="Clear draft corners"
+                  title="Clear draft"
                 >
                   <RotateCcw className="w-3.5 h-3.5" />
                 </button>
@@ -545,52 +477,51 @@ export const FarmLeafletMap: React.FC<FarmLeafletMapProps> = ({
         </div>
       )}
 
-      {/* Helpful bottom-left hint bar */}
-      {mode === 'onboarding' ? (
-        <div className="absolute bottom-3 left-3 z-[400] bg-[#FFFEFB]/95 backdrop-blur-sm border border-[#D9D9D9] rounded-xl px-3 py-1.5 shadow-sm max-w-[300px]">
+      {/* Bottom-left contextual hint */}
+      <div className="absolute bottom-3 left-3 z-[400] bg-[#FFFEFB]/95 backdrop-blur-sm border border-[#D9D9D9] rounded-xl px-3 py-1.5 shadow-sm max-w-[310px]">
+        {mode === 'onboarding' ? (
           <div className="flex items-center gap-2 text-[11px] font-medium text-[#474747]">
             <span className="inline-block w-2.5 h-2.5 rounded-full bg-[#EBB40E] border border-[#111111] shrink-0" />
             <span>
               {toolMode === 'resize'
                 ? 'Drag yellow corners to resize · Drag center label to move'
                 : toolMode === 'pin'
-                  ? 'Click anywhere on map to relocate farm parcel'
-                  : 'Click points around your farm perimeter to draw custom area'}
+                  ? 'Click anywhere on the global map to pin your farm'
+                  : 'Click around your land edges to outline your field'}
             </span>
           </div>
-        </div>
-      ) : (
-        <div className="absolute bottom-3 left-3 z-[400] bg-[#FFFEFB]/95 backdrop-blur-sm border border-[#D9D9D9] rounded-xl px-3 py-2 shadow-sm max-w-[260px]">
-          {overlayMode === 'ndvi' ? (
-            <div className="space-y-1">
-              <div className="text-[10px] font-bold uppercase tracking-wider text-[#474747]">
-                NASA NDVI Vegetation Index
-              </div>
-              <div className="flex items-center gap-1.5 text-[10px] font-mono-tech text-[#474747]">
-                <span>0.50</span>
-                <div className="h-2 flex-1 rounded-full bg-gradient-to-r from-[#D96B27] via-[#EBB40E] via-[#92D500] to-[#00873A]" />
-                <span>0.88</span>
-              </div>
+        ) : overlayMode === 'moisture' ? (
+          <div className="space-y-1">
+            <div className="text-[10px] font-bold uppercase tracking-wider text-[#474747]">
+              NASA POWER Soil Wetness
             </div>
-          ) : overlayMode === 'moisture' ? (
-            <div className="space-y-1">
-              <div className="text-[10px] font-bold uppercase tracking-wider text-[#474747]">
-                NASA SMAP Root-Zone Moisture
-              </div>
-              <div className="flex items-center gap-1.5 text-[10px] font-mono-tech text-[#474747]">
-                <span>18%</span>
-                <div className="h-2 flex-1 rounded-full bg-gradient-to-r from-[#EBB40E] via-[#44BE7E] via-[#1696A8] to-[#0A6E8A]" />
-                <span>45%</span>
-              </div>
+            <div className="flex items-center gap-1.5 text-[10px] font-mono-tech text-[#474747]">
+              <span>Dry</span>
+              <div className="h-2 w-28 rounded-full bg-gradient-to-r from-[#EBB40E] via-[#44BE7E] to-[#0A6E8A]" />
+              <span>Wet</span>
             </div>
-          ) : (
-            <div className="flex items-center gap-2 text-[11px] font-medium text-[#474747]">
-              <span className="inline-block w-2 h-2 rounded-full bg-[#00873A]" />
-              <span>Click any quadrant (S1–S4) to inspect live metrics</span>
+          </div>
+        ) : overlayMode === 'health' ? (
+          <div className="space-y-1">
+            <div className="text-[10px] font-bold uppercase tracking-wider text-[#474747]">
+              Crop Health Index (NDVI)
             </div>
-          )}
-        </div>
-      )}
+            <div className="flex items-center gap-1.5 text-[10px] font-mono-tech text-[#474747]">
+              <span>Fair</span>
+              <div className="h-2 w-28 rounded-full bg-gradient-to-r from-[#EBB40E] via-[#92D500] to-[#00873A]" />
+              <span>Thriving</span>
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 text-[11px] font-semibold text-[#111111]">
+            <span
+              className="inline-block w-2.5 h-2.5 rounded-full shrink-0"
+              style={{ backgroundColor: fieldOverlay?.cropColor ?? '#00873A' }}
+            />
+            <span>Unified single-surface farm view</span>
+          </div>
+        )}
+      </div>
     </div>
   );
 };

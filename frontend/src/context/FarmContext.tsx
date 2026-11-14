@@ -1,20 +1,27 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import {
   AppScreen,
+  CalendarEvent,
   ChatMessage,
+  FarmBeforeAnalysis,
+  FarmEditTab,
   FarmerProfile,
-  ProposedStrategyUpdate,
-  RotationParameters,
-  RotationStrategy,
-  StrategyApprovalLog,
+  FarmRecord,
+  ScoredRotationStrategy,
+  StoredAccount,
 } from '../types/farm';
 import {
-  createInitialStrategy,
-  createProposalFromParameters,
-  DEFAULT_FARMER_PROFILE,
-  generateNasaBaseline,
-  processAgronomyChatPrompt,
-} from '../data/agronomyData';
+  buildBeforeFarmAnalysis,
+  buildFarmCalendarEvents,
+  DEFAULT_GLOBAL_PROFILE,
+  evaluateTop3Strategies,
+  generateGlobalAgronomyReply,
+} from '../data/decisionEngine';
+import {
+  buildFallbackNasaPower,
+  fetchLiveNasaPower,
+  resolveSlopeDegrees,
+} from '../api/nasaPowerService';
 import {
   ClimateScenario,
   DEFAULT_CONTRACT_REQUEST,
@@ -30,24 +37,62 @@ import {
 
 export interface ContractSettings {
   years: number;
-  slope_deg: number | null;
+  use_gee: boolean;
+  slope_deg: number;
   weights: OptimizationWeights;
   scenario: ClimateScenario;
   replay_year: number | null;
   rain_change_pct: number;
 }
 
+export interface FarmModalState {
+  open: boolean;
+  mode: 'add' | 'edit';
+  initialTab: FarmEditTab;
+}
+
+export type NewFarmInput = Omit<
+  FarmRecord,
+  'id' | 'nasaPower' | 'selectedStrategyId' | 'customCalendarEvents' | 'completedEventIds'
+>;
+
 interface FarmContextValue {
   screen: AppScreen;
   authTab: 'login' | 'register';
   isAuthenticated: boolean;
+  // Merged owner + active farm view (keeps all screens cleanly synced)
   profile: FarmerProfile;
-  strategy: RotationStrategy;
-  pendingProposal: ProposedStrategyUpdate | null;
+  // Multi-farm state & management
+  farms: FarmRecord[];
+  activeFarmId: string;
+  activeFarm: FarmRecord;
+  switchFarm: (farmId: string) => void;
+  addFarm: (input: NewFarmInput) => Promise<void>;
+  updateActiveFarm: (updates: Partial<NewFarmInput>) => Promise<void>;
+  deleteFarm: (farmId: string) => void;
+  farmModal: FarmModalState;
+  openAddFarmModal: () => void;
+  openEditFarmModal: (initialTab?: FarmEditTab) => void;
+  closeFarmModal: () => void;
+  isFetchingNasa: boolean;
+  // Decision engine outputs
+  beforeAnalysis: FarmBeforeAnalysis;
+  top3Strategies: ScoredRotationStrategy[];
+  selectedStrategyId: string | null;
+  activeStrategy: ScoredRotationStrategy;
+  // Calendar
+  calendarEvents: CalendarEvent[];
+  toggleCalendarComplete: (eventId: string) => void;
+  addCalendarEvent: (ev: Omit<CalendarEvent, 'id' | 'isCustom'>) => void;
+  // Global Split-Screen AI Chatbot
+  isChatOpen: boolean;
+  setIsChatOpen: (open: boolean) => void;
   chatMessages: ChatMessage[];
-  approvalLogs: StrategyApprovalLog[];
-  toastMessage: string | null;
-  // Shared contract.json API integration
+  sendChatMessage: (text: string) => void;
+  // Global Data Sources Directory Modal
+  isDataSourcesOpen: boolean;
+  setIsDataSourcesOpen: (open: boolean) => void;
+  // Shared contract.json state
   contractSettings: ContractSettings;
   contractRequest: TadawolApiRequest;
   contractResponse: TadawolApiResponse;
@@ -58,24 +103,28 @@ interface FarmContextValue {
   setApiEndpoint: (url: string) => void;
   updateContractSettings: (updates: Partial<ContractSettings>) => void;
   syncContractWithBackend: (overrideUrl?: string) => Promise<void>;
-  // Navigation & farm actions
+  // Auth & Profile actions
+  toastMessage: string | null;
   navigate: (screen: AppScreen, options?: { authTab?: 'login' | 'register' }) => void;
-  loginDemo: (email?: string) => void;
-  registerFarm: (newProfile: Omit<FarmerProfile, 'nasaBaseline'>) => void;
+  loginWithCredentials: (email: string, password: string) => { ok: boolean; error?: string };
+  loginDemoAccount: () => void;
+  registerAccount: (
+    newProfile: Omit<FarmerProfile, 'nasaPower'>,
+    password: string
+  ) => Promise<void>;
   logout: () => void;
-  updateProfile: (updates: Partial<FarmerProfile>) => void;
-  proposeFromParameters: (params: RotationParameters) => void;
-  sendChatMessage: (text: string) => void;
-  approvePendingProposal: () => void;
-  discardPendingProposal: () => void;
+  updateProfile: (updates: Partial<FarmerProfile>, refetchNasa?: boolean) => Promise<void>;
+  refreshLiveNasaData: () => Promise<void>;
+  selectRotationStrategy: (strategyId: string | null) => void;
   showToast: (msg: string) => void;
-  resetDemoState: () => void;
 }
 
-const STORAGE_KEY = 'tadawol_platform_state_v2';
+const ACCOUNTS_KEY = 'tadawol_global_accounts_v3';
+const SESSION_KEY = 'tadawol_global_session_v3';
 
 const DEFAULT_CONTRACT_SETTINGS: ContractSettings = {
   years: DEFAULT_CONTRACT_REQUEST.years,
+  use_gee: DEFAULT_CONTRACT_REQUEST.use_gee,
   slope_deg: DEFAULT_CONTRACT_REQUEST.slope_deg,
   weights: { ...DEFAULT_CONTRACT_REQUEST.weights },
   scenario: DEFAULT_CONTRACT_REQUEST.scenario,
@@ -83,23 +132,133 @@ const DEFAULT_CONTRACT_SETTINGS: ContractSettings = {
   rain_change_pct: DEFAULT_CONTRACT_REQUEST.rain_change_pct,
 };
 
-interface PersistedState {
-  isAuthenticated: boolean;
-  screen: AppScreen;
-  profile: FarmerProfile;
-  strategy: RotationStrategy;
-  approvalLogs: StrategyApprovalLog[];
-  contractSettings?: ContractSettings;
-  apiEndpoint?: string;
+function profileToFarmRecord(
+  p: FarmerProfile,
+  id: string,
+  selectedStrategyId: string | null = null,
+  customCalendarEvents: CalendarEvent[] = [],
+  completedEventIds: string[] = []
+): FarmRecord {
+  return {
+    id,
+    farmName: p.farmName,
+    countryCode: p.countryCode,
+    countryName: p.countryName,
+    countryFlag: p.countryFlag,
+    climateZone: p.climateZone,
+    regionLabel: p.regionLabel,
+    coordinates: p.coordinates,
+    boundary: p.boundary,
+    areaHectares: p.areaHectares,
+    soilType: p.soilType,
+    slopeOption: p.slopeOption,
+    slopeDeg: p.slopeDeg,
+    irrigationType: p.irrigationType,
+    equipment: p.equipment,
+    previousCrops: p.previousCrops,
+    nasaPower: p.nasaPower,
+    selectedStrategyId,
+    customCalendarEvents,
+    completedEventIds,
+  };
 }
 
-function buildWelcomeChat(profile: FarmerProfile): ChatMessage[] {
+function hydrateFarm(farm: FarmRecord): FarmRecord {
+  const np = farm.nasaPower;
+  if (!np || !Array.isArray(np.riskCalendarMonthly) || np.riskCalendarMonthly.length !== 12) {
+    return {
+      ...farm,
+      nasaPower: buildFallbackNasaPower(farm.coordinates, farm.soilType, farm.slopeDeg),
+    };
+  }
+  return farm;
+}
+
+function createDemoAccount(): StoredAccount {
+  const primaryFarm = profileToFarmRecord(DEFAULT_GLOBAL_PROFILE, 'farm-default-1');
+  return {
+    email: DEFAULT_GLOBAL_PROFILE.email,
+    password: 'tadawol123',
+    name: DEFAULT_GLOBAL_PROFILE.name,
+    photoDataUrl: DEFAULT_GLOBAL_PROFILE.photoDataUrl,
+    farms: [primaryFarm],
+    activeFarmId: primaryFarm.id,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function hydrateAccount(raw: StoredAccount): StoredAccount {
+  // Automatically migrate single-farm legacy v3 accounts into multi-farm structure
+  if (!Array.isArray(raw.farms) || raw.farms.length === 0) {
+    const legacyProfile = raw.profile ?? DEFAULT_GLOBAL_PROFILE;
+    const migratedFarm = hydrateFarm(
+      profileToFarmRecord(
+        legacyProfile,
+        'farm-migrated-1',
+        raw.selectedStrategyId ?? null,
+        raw.customCalendarEvents ?? [],
+        raw.completedEventIds ?? []
+      )
+    );
+    return {
+      email: raw.email || legacyProfile.email,
+      password: raw.password || 'tadawol123',
+      name: raw.name || legacyProfile.name,
+      photoDataUrl: raw.photoDataUrl ?? legacyProfile.photoDataUrl,
+      farms: [migratedFarm],
+      activeFarmId: migratedFarm.id,
+      updatedAt: raw.updatedAt || new Date().toISOString(),
+    };
+  }
+
+  const hydratedFarms = raw.farms.map(hydrateFarm);
+  const validActiveId = hydratedFarms.some((f) => f.id === raw.activeFarmId)
+    ? raw.activeFarmId
+    : hydratedFarms[0].id;
+
+  return {
+    ...raw,
+    name: raw.name || raw.profile?.name || 'Farmer',
+    photoDataUrl: raw.photoDataUrl ?? raw.profile?.photoDataUrl,
+    farms: hydratedFarms,
+    activeFarmId: validActiveId,
+  };
+}
+
+function loadAccounts(): StoredAccount[] {
+  try {
+    const raw = localStorage.getItem(ACCOUNTS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as StoredAccount[];
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed.map(hydrateAccount);
+    }
+  } catch {
+    // ignore storage parse failure
+  }
+  const seeded = [createDemoAccount()];
+  try {
+    localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(seeded));
+  } catch {
+    // ignore quota
+  }
+  return seeded;
+}
+
+function saveAccounts(accounts: StoredAccount[]) {
+  try {
+    localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(accounts));
+  } catch {
+    // ignore quota
+  }
+}
+
+function buildWelcomeMessages(profile: FarmerProfile): ChatMessage[] {
   return [
     {
-      id: 'msg-welcome-1',
+      id: `ai-welcome-${Date.now()}`,
       role: 'assistant',
-      timestamp: '08:45 AM',
-      content: `Welcome to the **AI Rotation Lab**, ${profile.name.split(' ')[0]}. I've synced **NASA SMAP soil moisture (${profile.nasaBaseline.smapSoilMoisturePct}%)**, **MODIS thermal telemetry (${profile.nasaBaseline.modisSurfaceTempC}°C)**, and your **${profile.soilType}** profile for **${profile.farmName}** (${profile.areaHectares} ha). Ask me any agronomy question or request a plot adjustment — e.g., *"Prioritize drought-resistant crops in S2"* — and I'll draft a strategy update for your approval.`,
+      timestamp: 'Now',
+      content: `Hello ${profile.name.split(' ')[0]}! I'm your **Tadawol AI Advisor**.\n\nI'm connected to **${profile.farmName}** in **${profile.countryFlag} ${profile.countryName}** (${profile.areaHectares} ha, **${profile.soilType}** soil) and your **NASA POWER** weather & soil moisture data (**${profile.nasaPower.moistureStatus}**, ${profile.nasaPower.rootMoisturePct}%).\n\nAsk me anything in plain language — like how to cut fertilizer costs, save water, check frost/rain risks, or compare your Top 3 rotation plans!`,
     },
   ];
 }
@@ -107,51 +266,89 @@ function buildWelcomeChat(profile: FarmerProfile): ChatMessage[] {
 const FarmContext = createContext<FarmContextValue | null>(null);
 
 export const FarmProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const loadInitial = (): PersistedState | null => {
+  const [accounts, setAccounts] = useState<StoredAccount[]>(() => loadAccounts());
+
+  const initialSession = (() => {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
+      const raw = localStorage.getItem(SESSION_KEY);
       if (!raw) return null;
-      const parsed = JSON.parse(raw) as PersistedState;
-      if (parsed && parsed.profile && parsed.strategy) return parsed;
+      return JSON.parse(raw) as { email: string; screen: AppScreen };
     } catch {
-      // ignore corrupted storage
+      return null;
     }
-    return null;
-  };
+  })();
 
-  const saved = loadInitial();
-  const initialProfile = saved?.profile ?? DEFAULT_FARMER_PROFILE;
-  const initialStrategy = saved?.strategy ?? createInitialStrategy(initialProfile);
+  const initialAccount = initialSession
+    ? accounts.find((a) => a.email.toLowerCase() === initialSession.email.toLowerCase()) ?? null
+    : null;
 
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(saved?.isAuthenticated ?? false);
-  const [screen, setScreen] = useState<AppScreen>(saved?.screen ?? 'landing');
+  const fallbackDemo = createDemoAccount();
+  const seedAccount = initialAccount ?? fallbackDemo;
+
+  const [currentEmail, setCurrentEmail] = useState<string | null>(initialAccount?.email ?? null);
+  const [ownerName, setOwnerName] = useState<string>(seedAccount.name);
+  const [ownerPhoto, setOwnerPhoto] = useState<string | undefined>(seedAccount.photoDataUrl);
+  const [farms, setFarms] = useState<FarmRecord[]>(seedAccount.farms);
+  const [activeFarmId, setActiveFarmId] = useState<string>(seedAccount.activeFarmId);
+
+  const [screen, setScreen] = useState<AppScreen>(
+    initialAccount ? initialSession?.screen ?? 'dashboard' : 'landing'
+  );
   const [authTab, setAuthTab] = useState<'login' | 'register'>('login');
-  const [profile, setProfile] = useState<FarmerProfile>(initialProfile);
-  const [strategy, setStrategy] = useState<RotationStrategy>(initialStrategy);
-  const [pendingProposal, setPendingProposal] = useState<ProposedStrategyUpdate | null>(null);
+
+  const [farmModal, setFarmModal] = useState<FarmModalState>({
+    open: false,
+    mode: 'edit',
+    initialTab: 'location-size',
+  });
+
+  const [isFetchingNasa, setIsFetchingNasa] = useState(false);
+  const [isChatOpen, setIsChatOpen] = useState(false);
+  const [isDataSourcesOpen, setIsDataSourcesOpen] = useState(false);
+
+  const activeFarm: FarmRecord = useMemo(
+    () => farms.find((f) => f.id === activeFarmId) ?? farms[0],
+    [farms, activeFarmId]
+  );
+
+  // Unified FarmerProfile view combining Owner + Active Farm so every screen adapts seamlessly
+  const profile: FarmerProfile = useMemo(
+    () => ({
+      name: ownerName,
+      email: currentEmail ?? seedAccount.email,
+      photoDataUrl: ownerPhoto,
+      farmName: activeFarm.farmName,
+      countryCode: activeFarm.countryCode,
+      countryName: activeFarm.countryName,
+      countryFlag: activeFarm.countryFlag,
+      climateZone: activeFarm.climateZone,
+      regionLabel: activeFarm.regionLabel,
+      coordinates: activeFarm.coordinates,
+      boundary: activeFarm.boundary,
+      areaHectares: activeFarm.areaHectares,
+      soilType: activeFarm.soilType,
+      slopeOption: activeFarm.slopeOption,
+      slopeDeg: activeFarm.slopeDeg,
+      irrigationType: activeFarm.irrigationType,
+      equipment: activeFarm.equipment,
+      previousCrops: activeFarm.previousCrops,
+      nasaPower: activeFarm.nasaPower,
+    }),
+    [ownerName, currentEmail, seedAccount.email, ownerPhoto, activeFarm]
+  );
+
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>(() =>
-    buildWelcomeChat(initialProfile)
+    buildWelcomeMessages(profile)
   );
-  const [approvalLogs, setApprovalLogs] = useState<StrategyApprovalLog[]>(
-    saved?.approvalLogs ?? [
-      {
-        id: 'log-init',
-        timestamp: 'Nov 14, 2026 · 08:42',
-        title: initialStrategy.name,
-        source: 'initial',
-        summary: 'Initialized 4-zone crop rotation baseline from NASA SMAP & MODIS pass.',
-      },
-    ]
-  );
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // Shared contract.json state
   const [contractSettings, setContractSettings] = useState<ContractSettings>(
-    saved?.contractSettings ?? DEFAULT_CONTRACT_SETTINGS
+    DEFAULT_CONTRACT_SETTINGS
   );
   const [apiEndpoint, setApiEndpoint] = useState<string>(
-    saved?.apiEndpoint ??
-      ((import.meta.env.VITE_TADAWOL_API_URL as string | undefined) ??
-        'http://localhost:8000/api/analyze')
+    (import.meta.env.VITE_TADAWOL_API_URL as string | undefined) ??
+      'http://localhost:8000/api/analyze'
   );
   const [remoteOverrideResponse, setRemoteOverrideResponse] = useState<TadawolApiResponse | null>(
     null
@@ -161,61 +358,461 @@ export const FarmProvider: React.FC<{ children: React.ReactNode }> = ({ children
   );
   const [isSyncingApi, setIsSyncingApi] = useState(false);
   const [lastApiError, setLastApiError] = useState<string | null>(null);
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  const contractRequest: TadawolApiRequest = useMemo(() => {
-    const activeStrat = pendingProposal ? pendingProposal.proposedStrategy : strategy;
-    return buildContractRequest(profile, activeStrat, {
-      years: contractSettings.years,
-      slope_deg: contractSettings.slope_deg,
-      weights: contractSettings.weights,
-      scenario: contractSettings.scenario,
-      replay_year: contractSettings.replay_year,
-      rain_change_pct: contractSettings.rain_change_pct,
-    });
-  }, [profile, strategy, pendingProposal, contractSettings]);
+  const isAuthenticated = Boolean(currentEmail);
 
-  const localSimulatedResponse = useMemo(() => {
-    const activeStrat = pendingProposal ? pendingProposal.proposedStrategy : strategy;
-    return simulateContractResponse(contractRequest, profile, activeStrat);
-  }, [contractRequest, profile, strategy, pendingProposal]);
-
-  const contractResponse = remoteOverrideResponse ?? localSimulatedResponse;
-
-  // Clear stale remote response whenever request inputs change unless re-synced
-  useEffect(() => {
-    if (!apiEndpoint.trim()) {
-      setRemoteOverrideResponse(null);
-      setContractSource('local-simulator');
+  // Decision Engine live computations for the Active Farm
+  const beforeAnalysis = useMemo(() => buildBeforeFarmAnalysis(profile), [profile]);
+  const top3Strategies = useMemo(() => evaluateTop3Strategies(profile), [profile]);
+  const selectedStrategyId = activeFarm.selectedStrategyId;
+  const activeStrategy = useMemo(() => {
+    if (selectedStrategyId) {
+      return top3Strategies.find((s) => s.id === selectedStrategyId) ?? top3Strategies[0];
     }
-  }, [contractRequest, apiEndpoint]);
+    return top3Strategies[0];
+  }, [selectedStrategyId, top3Strategies]);
 
+  // Combined Farm Calendar events scoped to the Active Farm
+  const calendarEvents = useMemo(() => {
+    const completedIds = activeFarm.completedEventIds ?? [];
+    const base = buildFarmCalendarEvents(profile, activeStrategy).map((ev) => ({
+      ...ev,
+      completed: completedIds.includes(ev.id) ? true : ev.completed,
+    }));
+    const custom = (activeFarm.customCalendarEvents ?? []).map((ev) => ({
+      ...ev,
+      completed: completedIds.includes(ev.id) ? true : ev.completed,
+    }));
+    return [...base, ...custom].sort((a, b) => a.date.localeCompare(b.date));
+  }, [profile, activeStrategy, activeFarm.customCalendarEvents, activeFarm.completedEventIds]);
+
+  // Shared contract.json request & response
+  const contractRequest: TadawolApiRequest = useMemo(
+    () =>
+      buildContractRequest(profile, activeStrategy, {
+        years: contractSettings.years,
+        use_gee: contractSettings.use_gee,
+        slope_deg: Math.round(profile.slopeDeg),
+        weights: contractSettings.weights,
+        scenario: contractSettings.scenario,
+        replay_year: contractSettings.replay_year,
+        rain_change_pct: contractSettings.rain_change_pct,
+      }),
+    [profile, activeStrategy, contractSettings]
+  );
+
+  const localContractResponse = useMemo(
+    () => simulateContractResponse(contractRequest, profile, activeStrategy, top3Strategies),
+    [contractRequest, profile, activeStrategy, top3Strategies]
+  );
+
+  const contractResponse = remoteOverrideResponse ?? localContractResponse;
+
+  // Persist account + all farms whenever state changes
   useEffect(() => {
+    if (!currentEmail) {
+      localStorage.removeItem(SESSION_KEY);
+      return;
+    }
     try {
-      const toSave: PersistedState = {
-        isAuthenticated,
-        screen,
-        profile,
-        strategy,
-        approvalLogs,
-        contractSettings,
-        apiEndpoint,
-      };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
+      localStorage.setItem(SESSION_KEY, JSON.stringify({ email: currentEmail, screen }));
     } catch {
-      // ignore storage quota
+      // ignore quota
     }
-  }, [isAuthenticated, screen, profile, strategy, approvalLogs, contractSettings, apiEndpoint]);
+    setAccounts((prev) => {
+      const updated = prev.map((acc) =>
+        acc.email.toLowerCase() === currentEmail.toLowerCase()
+          ? {
+              ...acc,
+              name: ownerName,
+              photoDataUrl: ownerPhoto,
+              farms,
+              activeFarmId,
+              updatedAt: new Date().toISOString(),
+            }
+          : acc
+      );
+      saveAccounts(updated);
+      return updated;
+    });
+  }, [currentEmail, screen, ownerName, ownerPhoto, farms, activeFarmId]);
 
-  const showToast = (msg: string) => {
-    setToastMessage(msg);
-  };
+  // Automatically fetch live NASA POWER for active farm if still fallback
+  useEffect(() => {
+    if (isAuthenticated && activeFarm.nasaPower.source === 'nasa-power-fallback' && !isFetchingNasa) {
+      void refreshLiveNasaData();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated, currentEmail, activeFarmId]);
+
+  const showToast = (msg: string) => setToastMessage(msg);
 
   useEffect(() => {
     if (!toastMessage) return;
     const t = setTimeout(() => setToastMessage(null), 4200);
     return () => clearTimeout(t);
   }, [toastMessage]);
+
+  const mutateActiveFarm = (updater: (farm: FarmRecord) => FarmRecord) => {
+    setFarms((prev) => prev.map((f) => (f.id === activeFarm.id ? updater(f) : f)));
+  };
+
+  const refreshLiveNasaData = async () => {
+    const targetFarmId = activeFarm.id;
+    setIsFetchingNasa(true);
+    const liveData = await fetchLiveNasaPower(
+      activeFarm.coordinates,
+      activeFarm.soilType,
+      activeFarm.slopeDeg
+    );
+    setFarms((prev) =>
+      prev.map((f) => (f.id === targetFarmId ? { ...f, nasaPower: liveData } : f))
+    );
+    setIsFetchingNasa(false);
+    if (liveData.source === 'nasa-power-live') {
+      showToast(
+        `Live NASA POWER synced for "${activeFarm.farmName}" (${liveData.annualRainMm} mm/yr · ${liveData.moistureStatus})`
+      );
+    }
+  };
+
+  // Multi-Farm Actions
+  const switchFarm = (farmId: string) => {
+    const target = farms.find((f) => f.id === farmId);
+    if (!target || target.id === activeFarmId) return;
+    setActiveFarmId(target.id);
+    setRemoteOverrideResponse(null);
+    const targetProfile: FarmerProfile = {
+      name: ownerName,
+      email: currentEmail ?? seedAccount.email,
+      photoDataUrl: ownerPhoto,
+      farmName: target.farmName,
+      countryCode: target.countryCode,
+      countryName: target.countryName,
+      countryFlag: target.countryFlag,
+      climateZone: target.climateZone,
+      regionLabel: target.regionLabel,
+      coordinates: target.coordinates,
+      boundary: target.boundary,
+      areaHectares: target.areaHectares,
+      soilType: target.soilType,
+      slopeOption: target.slopeOption,
+      slopeDeg: target.slopeDeg,
+      irrigationType: target.irrigationType,
+      equipment: target.equipment,
+      previousCrops: target.previousCrops,
+      nasaPower: target.nasaPower,
+    };
+    setChatMessages(buildWelcomeMessages(targetProfile));
+    showToast(`Switched to "${target.farmName}" (${target.countryFlag} ${target.areaHectares} ha)`);
+  };
+
+  const addFarm = async (input: NewFarmInput) => {
+    setIsFetchingNasa(true);
+    const resolvedSlope = resolveSlopeDegrees(input.slopeOption, input.coordinates);
+    const liveNasa = await fetchLiveNasaPower(input.coordinates, input.soilType, resolvedSlope);
+    setIsFetchingNasa(false);
+
+    const newFarm: FarmRecord = {
+      ...input,
+      id: `farm-${Date.now().toString(36)}`,
+      slopeDeg: resolvedSlope,
+      nasaPower: liveNasa,
+      selectedStrategyId: null,
+      customCalendarEvents: [],
+      completedEventIds: [],
+    };
+
+    setFarms((prev) => [...prev, newFarm]);
+    setActiveFarmId(newFarm.id);
+    setRemoteOverrideResponse(null);
+    setChatMessages(
+      buildWelcomeMessages({
+        name: ownerName,
+        email: currentEmail ?? seedAccount.email,
+        photoDataUrl: ownerPhoto,
+        ...newFarm,
+      })
+    );
+    showToast(
+      `Added "${newFarm.farmName}" (${newFarm.countryFlag} ${newFarm.areaHectares} ha) with live NASA POWER data!`
+    );
+  };
+
+  const updateActiveFarm = async (updates: Partial<NewFarmInput>) => {
+    const nextCoords = updates.coordinates ?? activeFarm.coordinates;
+    const nextSoil = updates.soilType ?? activeFarm.soilType;
+    const nextSlopeOpt = updates.slopeOption ?? activeFarm.slopeOption;
+    const nextSlopeDeg =
+      updates.slopeDeg ??
+      (updates.slopeOption || updates.coordinates
+        ? resolveSlopeDegrees(nextSlopeOpt, nextCoords)
+        : activeFarm.slopeDeg);
+
+    const locationChanged =
+      Math.abs(nextCoords.lat - activeFarm.coordinates.lat) > 0.002 ||
+      Math.abs(nextCoords.lng - activeFarm.coordinates.lng) > 0.002 ||
+      (updates.countryCode !== undefined && updates.countryCode !== activeFarm.countryCode);
+
+    const needsNasaRefresh =
+      locationChanged || nextSoil !== activeFarm.soilType || nextSlopeDeg !== activeFarm.slopeDeg;
+
+    const targetFarmId = activeFarm.id;
+
+    setFarms((prev) =>
+      prev.map((f) =>
+        f.id === targetFarmId
+          ? {
+              ...f,
+              ...updates,
+              slopeDeg: nextSlopeDeg,
+            }
+          : f
+      )
+    );
+    setRemoteOverrideResponse(null);
+
+    if (needsNasaRefresh) {
+      setIsFetchingNasa(true);
+      const freshNasa = await fetchLiveNasaPower(nextCoords, nextSoil, nextSlopeDeg);
+      setFarms((prev) =>
+        prev.map((f) => (f.id === targetFarmId ? { ...f, nasaPower: freshNasa } : f))
+      );
+      setIsFetchingNasa(false);
+      showToast(
+        `Updated "${updates.farmName ?? activeFarm.farmName}" & refreshed live NASA POWER data!`
+      );
+    } else {
+      showToast(`Saved changes to "${updates.farmName ?? activeFarm.farmName}".`);
+    }
+  };
+
+  const deleteFarm = (farmId: string) => {
+    if (farms.length <= 1) {
+      showToast('You need at least one farm in your account.');
+      return;
+    }
+    const target = farms.find((f) => f.id === farmId);
+    const remaining = farms.filter((f) => f.id !== farmId);
+    setFarms(remaining);
+    if (activeFarmId === farmId) {
+      setActiveFarmId(remaining[0].id);
+    }
+    showToast(`Removed farm "${target?.farmName ?? 'Farm'}".`);
+  };
+
+  const openAddFarmModal = () =>
+    setFarmModal({ open: true, mode: 'add', initialTab: 'location-size' });
+
+  const openEditFarmModal = (initialTab: FarmEditTab = 'location-size') =>
+    setFarmModal({ open: true, mode: 'edit', initialTab });
+
+  const closeFarmModal = () => setFarmModal((prev) => ({ ...prev, open: false }));
+
+  const navigate = (nextScreen: AppScreen, options?: { authTab?: 'login' | 'register' }) => {
+    if (options?.authTab) setAuthTab(options.authTab);
+    if (!isAuthenticated && nextScreen !== 'landing' && nextScreen !== 'auth') {
+      setScreen('auth');
+      return;
+    }
+    setScreen(nextScreen);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const applyAccountSession = (acc: StoredAccount) => {
+    const hydrated = hydrateAccount(acc);
+    const active = hydrated.farms.find((f) => f.id === hydrated.activeFarmId) ?? hydrated.farms[0];
+    setCurrentEmail(hydrated.email);
+    setOwnerName(hydrated.name);
+    setOwnerPhoto(hydrated.photoDataUrl);
+    setFarms(hydrated.farms);
+    setActiveFarmId(active.id);
+    setChatMessages(
+      buildWelcomeMessages({
+        name: hydrated.name,
+        email: hydrated.email,
+        photoDataUrl: hydrated.photoDataUrl,
+        ...active,
+      })
+    );
+    setScreen('dashboard');
+  };
+
+  const loginWithCredentials = (email: string, password: string) => {
+    const cleanEmail = email.trim().toLowerCase();
+    const found = accounts.find((a) => a.email.toLowerCase() === cleanEmail);
+    if (!found) {
+      return {
+        ok: false,
+        error: 'No account found with that email. Try Register or the Demo Farmer button below.',
+      };
+    }
+    if (found.password !== password) {
+      return {
+        ok: false,
+        error: 'Incorrect password. Please try again (Demo password: tadawol123).',
+      };
+    }
+
+    applyAccountSession(found);
+    showToast(`Welcome back, ${found.name}!`);
+    return { ok: true };
+  };
+
+  const loginDemoAccount = () => {
+    const demo =
+      accounts.find((a) => a.email.toLowerCase() === DEFAULT_GLOBAL_PROFILE.email.toLowerCase()) ??
+      createDemoAccount();
+    applyAccountSession(demo);
+    showToast(`Signed in as ${demo.name}.`);
+  };
+
+  const registerAccount = async (
+    newFarmProfile: Omit<FarmerProfile, 'nasaPower'>,
+    password: string
+  ) => {
+    setIsFetchingNasa(true);
+    const liveNasa = await fetchLiveNasaPower(
+      newFarmProfile.coordinates,
+      newFarmProfile.soilType,
+      newFarmProfile.slopeDeg
+    );
+    setIsFetchingNasa(false);
+
+    const fullProfile: FarmerProfile = {
+      ...newFarmProfile,
+      nasaPower: liveNasa,
+    };
+    const firstFarm = profileToFarmRecord(fullProfile, `farm-${Date.now().toString(36)}`);
+
+    const newAccount: StoredAccount = {
+      email: fullProfile.email,
+      password: password || 'tadawol123',
+      name: fullProfile.name,
+      photoDataUrl: fullProfile.photoDataUrl,
+      farms: [firstFarm],
+      activeFarmId: firstFarm.id,
+      updatedAt: new Date().toISOString(),
+    };
+
+    setAccounts((prev) => {
+      const withoutDup = prev.filter(
+        (a) => a.email.toLowerCase() !== fullProfile.email.toLowerCase()
+      );
+      const next = [newAccount, ...withoutDup];
+      saveAccounts(next);
+      return next;
+    });
+
+    applyAccountSession(newAccount);
+    showToast(
+      `Farm "${fullProfile.farmName}" registered with ${liveNasa.source === 'nasa-power-live' ? 'live NASA POWER data' : 'calibrated NASA baseline'}!`
+    );
+  };
+
+  const logout = () => {
+    setCurrentEmail(null);
+    setIsChatOpen(false);
+    localStorage.removeItem(SESSION_KEY);
+    setScreen('landing');
+    showToast('Logged out cleanly. All your farms stay saved for next login.');
+  };
+
+  const updateProfile = async (updates: Partial<FarmerProfile>, refetchNasa = false) => {
+    if (updates.name !== undefined) setOwnerName(updates.name);
+    if ('photoDataUrl' in updates) setOwnerPhoto(updates.photoDataUrl);
+
+    // Forward any farm-related updates cleanly to the active farm
+    const farmUpdates: Partial<NewFarmInput> = {};
+    if (updates.farmName !== undefined) farmUpdates.farmName = updates.farmName;
+    if (updates.countryCode !== undefined) farmUpdates.countryCode = updates.countryCode;
+    if (updates.countryName !== undefined) farmUpdates.countryName = updates.countryName;
+    if (updates.countryFlag !== undefined) farmUpdates.countryFlag = updates.countryFlag;
+    if (updates.climateZone !== undefined) farmUpdates.climateZone = updates.climateZone;
+    if (updates.regionLabel !== undefined) farmUpdates.regionLabel = updates.regionLabel;
+    if (updates.coordinates !== undefined) farmUpdates.coordinates = updates.coordinates;
+    if (updates.boundary !== undefined) farmUpdates.boundary = updates.boundary;
+    if (updates.areaHectares !== undefined) farmUpdates.areaHectares = updates.areaHectares;
+    if (updates.soilType !== undefined) farmUpdates.soilType = updates.soilType;
+    if (updates.slopeOption !== undefined) farmUpdates.slopeOption = updates.slopeOption;
+    if (updates.slopeDeg !== undefined) farmUpdates.slopeDeg = updates.slopeDeg;
+    if (updates.irrigationType !== undefined) farmUpdates.irrigationType = updates.irrigationType;
+    if (updates.equipment !== undefined) farmUpdates.equipment = updates.equipment;
+    if (updates.previousCrops !== undefined) farmUpdates.previousCrops = updates.previousCrops;
+
+    if (Object.keys(farmUpdates).length > 0) {
+      await updateActiveFarm(farmUpdates);
+    } else if (refetchNasa) {
+      await refreshLiveNasaData();
+    } else {
+      showToast('Profile settings updated.');
+    }
+  };
+
+  const selectRotationStrategy = (strategyId: string | null) => {
+    mutateActiveFarm((f) => ({ ...f, selectedStrategyId: strategyId }));
+    if (strategyId) {
+      const picked = top3Strategies.find((s) => s.id === strategyId);
+      if (picked) {
+        showToast(`Selected ${picked.tierLabel}: "${picked.title}"`);
+      }
+    }
+  };
+
+  const toggleCalendarComplete = (eventId: string) => {
+    mutateActiveFarm((f) => {
+      const cur = f.completedEventIds ?? [];
+      return {
+        ...f,
+        completedEventIds: cur.includes(eventId)
+          ? cur.filter((id) => id !== eventId)
+          : [...cur, eventId],
+      };
+    });
+  };
+
+  const addCalendarEvent = (ev: Omit<CalendarEvent, 'id' | 'isCustom'>) => {
+    const created: CalendarEvent = {
+      ...ev,
+      id: `custom-${Date.now().toString(36)}`,
+      isCustom: true,
+    };
+    mutateActiveFarm((f) => ({
+      ...f,
+      customCalendarEvents: [...(f.customCalendarEvents ?? []), created],
+    }));
+    showToast(`Added "${created.title}" to "${activeFarm.farmName}" Calendar.`);
+  };
+
+  const sendChatMessage = (text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    const ts = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    const userMsg: ChatMessage = {
+      id: `u-${Date.now()}`,
+      role: 'user',
+      content: trimmed,
+      timestamp: ts,
+    };
+
+    const replyText = generateGlobalAgronomyReply(
+      trimmed,
+      profile,
+      activeStrategy,
+      top3Strategies,
+      screen
+    );
+
+    const aiMsg: ChatMessage = {
+      id: `a-${Date.now() + 1}`,
+      role: 'assistant',
+      content: replyText,
+      timestamp: ts,
+    };
+
+    setChatMessages((prev) => [...prev, userMsg, aiMsg]);
+  };
 
   const updateContractSettings = (updates: Partial<ContractSettings>) => {
     setContractSettings((prev) => ({
@@ -227,15 +824,15 @@ export const FarmProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const syncContractWithBackend = async (overrideUrl?: string) => {
-    const targetUrl = (overrideUrl ?? apiEndpoint).trim();
+    const url = (overrideUrl ?? apiEndpoint).trim();
     setIsSyncingApi(true);
     setLastApiError(null);
-    const activeStrat = pendingProposal ? pendingProposal.proposedStrategy : strategy;
     const result = await executeOptimizationContract(
       contractRequest,
       profile,
-      activeStrat,
-      targetUrl
+      activeStrategy,
+      top3Strategies,
+      url
     );
     setIsSyncingApi(false);
     setContractSource(result.source);
@@ -246,184 +843,11 @@ export const FarmProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setRemoteOverrideResponse(null);
       if (result.error) {
         setLastApiError(result.error);
-        showToast(`API unreachable (${result.error}) — using local contract simulator.`);
+        showToast(`API unreachable (${result.error}) — using local simulator.`);
       } else {
-        showToast('Contract response simulated locally (no remote URL configured).');
+        showToast('Using local contract simulator (no remote URL configured).');
       }
     }
-  };
-
-  const navigate = (nextScreen: AppScreen, options?: { authTab?: 'login' | 'register' }) => {
-    if (options?.authTab) setAuthTab(options.authTab);
-    if (
-      !isAuthenticated &&
-      (nextScreen === 'dashboard' ||
-        nextScreen === 'history' ||
-        nextScreen === 'rotation-lab' ||
-        nextScreen === 'predictions')
-    ) {
-      setScreen('auth');
-      return;
-    }
-    setScreen(nextScreen);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
-
-  const loginDemo = (email?: string) => {
-    setIsAuthenticated(true);
-    if (email && email.trim() && email.toLowerCase() !== profile.email.toLowerCase()) {
-      const derivedName = email
-        .split('@')[0]
-        .replace(/[._-]+/g, ' ')
-        .replace(/\b\w/g, (c) => c.toUpperCase());
-      setProfile((prev) => ({
-        ...prev,
-        email: email.trim(),
-        name: derivedName.length > 2 ? derivedName : prev.name,
-      }));
-    }
-    setScreen('dashboard');
-    showToast('Signed in · Live NASA SMAP & field telemetry synchronized.');
-  };
-
-  const registerFarm = (newFarm: Omit<FarmerProfile, 'nasaBaseline'>) => {
-    const nasaBaseline = generateNasaBaseline(newFarm.coordinates, newFarm.soilType);
-    const fullProfile: FarmerProfile = {
-      ...newFarm,
-      nasaBaseline,
-    };
-    const freshStrategy = createInitialStrategy(fullProfile);
-    setProfile(fullProfile);
-    setStrategy(freshStrategy);
-    setPendingProposal(null);
-    setRemoteOverrideResponse(null);
-    setChatMessages(buildWelcomeChat(fullProfile));
-    setApprovalLogs([
-      {
-        id: `log-${Date.now()}`,
-        timestamp: 'Just now',
-        title: freshStrategy.name,
-        source: 'initial',
-        summary: `Initialized farm (${fullProfile.areaHectares} ha, ${fullProfile.soilType}) with NASA baseline (${nasaBaseline.satellitePassId}).`,
-      },
-    ]);
-    setIsAuthenticated(true);
-    setScreen('dashboard');
-    showToast(`Farm "${fullProfile.farmName}" (${fullProfile.areaHectares} ha) initialized!`);
-  };
-
-  const logout = () => {
-    setIsAuthenticated(false);
-    setPendingProposal(null);
-    setScreen('landing');
-    showToast('Signed out cleanly.');
-  };
-
-  const updateProfile = (updates: Partial<FarmerProfile>) => {
-    setProfile((prev) => {
-      const merged = { ...prev, ...updates };
-      if (updates.soilType || updates.coordinates) {
-        merged.nasaBaseline = generateNasaBaseline(merged.coordinates, merged.soilType);
-      }
-      return merged;
-    });
-    showToast('Farm profile & baseline metrics updated.');
-  };
-
-  const proposeFromParameters = (params: RotationParameters) => {
-    const proposal = createProposalFromParameters(params, strategy, profile);
-    setPendingProposal(proposal);
-  };
-
-  const sendChatMessage = (text: string) => {
-    const trimmed = text.trim();
-    if (!trimmed) return;
-
-    const nowLabel = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    const userMsg: ChatMessage = {
-      id: `user-${Date.now()}`,
-      role: 'user',
-      content: trimmed,
-      timestamp: nowLabel,
-    };
-
-    const { reply, proposal } = processAgronomyChatPrompt(trimmed, strategy, profile);
-
-    const assistantMsg: ChatMessage = {
-      id: `ai-${Date.now() + 1}`,
-      role: 'assistant',
-      content: reply,
-      timestamp: nowLabel,
-      proposalId: proposal?.id,
-      proposalSnapshot: proposal,
-      proposalStatus: proposal ? 'pending' : undefined,
-    };
-
-    setChatMessages((prev) => {
-      const updated = proposal
-        ? prev.map((m) =>
-            m.proposalStatus === 'pending' ? { ...m, proposalStatus: 'discarded' as const } : m
-          )
-        : prev;
-      return [...updated, userMsg, assistantMsg];
-    });
-
-    if (proposal) {
-      setPendingProposal(proposal);
-    }
-  };
-
-  const approvePendingProposal = () => {
-    if (!pendingProposal) return;
-    const committed: RotationStrategy = {
-      ...pendingProposal.proposedStrategy,
-      approvedAt: new Date().toISOString(),
-    };
-    setStrategy(committed);
-    setChatMessages((prev) =>
-      prev.map((m) =>
-        m.proposalId === pendingProposal.id
-          ? { ...m, proposalStatus: 'approved' as const }
-          : m
-      )
-    );
-    setApprovalLogs((prev) => [
-      {
-        id: `log-${Date.now()}`,
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        title: pendingProposal.title,
-        source: pendingProposal.source,
-        summary: pendingProposal.summary,
-      },
-      ...prev,
-    ]);
-    const approvedTitle = pendingProposal.title;
-    setPendingProposal(null);
-    showToast(`Approved "${approvedTitle}" — S1–S4 map, roadmap & forecast recalculated!`);
-  };
-
-  const discardPendingProposal = () => {
-    if (!pendingProposal) return;
-    const discardId = pendingProposal.id;
-    setChatMessages((prev) =>
-      prev.map((m) =>
-        m.proposalId === discardId ? { ...m, proposalStatus: 'discarded' as const } : m
-      )
-    );
-    setPendingProposal(null);
-    showToast('Proposed changes discarded — active approved strategy kept.');
-  };
-
-  const resetDemoState = () => {
-    localStorage.removeItem(STORAGE_KEY);
-    const freshStrategy = createInitialStrategy(DEFAULT_FARMER_PROFILE);
-    setProfile(DEFAULT_FARMER_PROFILE);
-    setStrategy(freshStrategy);
-    setPendingProposal(null);
-    setContractSettings(DEFAULT_CONTRACT_SETTINGS);
-    setRemoteOverrideResponse(null);
-    setChatMessages(buildWelcomeChat(DEFAULT_FARMER_PROFILE));
-    showToast('Demo farm state restored to default baseline.');
   };
 
   return (
@@ -433,11 +857,31 @@ export const FarmProvider: React.FC<{ children: React.ReactNode }> = ({ children
         authTab,
         isAuthenticated,
         profile,
-        strategy,
-        pendingProposal,
+        farms,
+        activeFarmId: activeFarm.id,
+        activeFarm,
+        switchFarm,
+        addFarm,
+        updateActiveFarm,
+        deleteFarm,
+        farmModal,
+        openAddFarmModal,
+        openEditFarmModal,
+        closeFarmModal,
+        isFetchingNasa,
+        beforeAnalysis,
+        top3Strategies,
+        selectedStrategyId,
+        activeStrategy,
+        calendarEvents,
+        toggleCalendarComplete,
+        addCalendarEvent,
+        isChatOpen,
+        setIsChatOpen,
         chatMessages,
-        approvalLogs,
-        toastMessage,
+        sendChatMessage,
+        isDataSourcesOpen,
+        setIsDataSourcesOpen,
         contractSettings,
         contractRequest,
         contractResponse,
@@ -448,17 +892,16 @@ export const FarmProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setApiEndpoint,
         updateContractSettings,
         syncContractWithBackend,
+        toastMessage,
         navigate,
-        loginDemo,
-        registerFarm,
+        loginWithCredentials,
+        loginDemoAccount,
+        registerAccount,
         logout,
         updateProfile,
-        proposeFromParameters,
-        sendChatMessage,
-        approvePendingProposal,
-        discardPendingProposal,
+        refreshLiveNasaData,
+        selectRotationStrategy,
         showToast,
-        resetDemoState,
       }}
     >
       {children}

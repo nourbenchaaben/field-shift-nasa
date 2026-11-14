@@ -3,9 +3,8 @@
     "lat": 36.73,
     "lon": 9.18,
     "years": 10,
-    "use_gee": true,
-    "use_meteomatics": false,
-    "slope_deg": null,
+    "use_gee": false,
+    "slope_deg": 5,
     "weights": { "soil": 7, "water": 8, "erosion": 5, "income": 0 },
     "scenario": "normal",
     "replay_year": null,
@@ -14,32 +13,8 @@
   },
   "response": {
     "region_validated": true,
-    "kpis": {
-      "soil_health_index": 73,
-      "water_savings_pct": 72,
-      "erosion_reduction_pct": 81,
-      "yield_stability_pct": 72,
-      "expected_yield_gain_pct": 0,
-      "som_gain_pct": 0,
-      "nitrogen_balance_kg_ha": 0,
-      "sustainability_score": 74
-    },
-    "confidence": {
-      "overall_score": 55,
-      "level": "Moderate",
-      "data_source": "NASA POWER",
-      "gee_enabled": false,
-      "satellite_coverage_pct": 60,
-      "calibration_note": "Crop values are generic and require local agronomist validation."
-    },
-    "monthly_telemetry": {
-      "months": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
-      "monthly_rain_mm": [],
-      "monthly_soil_moisture": [],
-      "monthly_ndvi": [],
-      "monthly_temp_c": [],
-      "monthly_temp_min_c": []
-    },
+    "kpis": {},
+    "confidence": {},
     "rotations": [],
     "bare_field_clock": {},
     "sowing_window": {},

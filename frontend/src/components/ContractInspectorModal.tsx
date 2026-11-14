@@ -138,7 +138,7 @@ export const ContractInspectorModal: React.FC<ContractInspectorModalProps> = ({
             type="text"
             value={urlInput}
             onChange={(e) => setUrlInput(e.target.value)}
-            placeholder="Optional POST URL (e.g. http://localhost:8000/api/optimize) or leave blank for simulator"
+            placeholder="POST URL (default: http://localhost:8000/api/analyze)"
             className="flex-1 px-3 py-2 bg-white border border-[#D1D1D1] rounded-lg font-mono-tech text-xs focus:outline-none focus:border-[#00873A]"
           />
           <button
