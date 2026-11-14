@@ -4,66 +4,77 @@
     "lon": 9.18,
     "years": 10,
     "use_gee": false,
-    "slope_deg": 5.0,
+    "slope_deg": 5,
     "weights": { "soil": 7, "water": 8, "erosion": 5, "income": 0 },
     "scenario": "normal",
-    "replay_year": 2022,
+    "replay_year": null,
     "rain_change_pct": 0,
     "custom_rotation": ["Durum wheat", "Fava bean", "Barley + vetch"]
   },
   "response": {
     "region_validated": true,
     "kpis": {
-      "avg_rain_mm": 540,
-      "driest_year": 2022,
-      "driest_year_mm": 310,
-      "heavy_rain_days_yr": 4.2,
-      "slope_deg": 5.0
+      "soil_health_index": 73,
+      "water_savings_pct": 72,
+      "erosion_reduction_pct": 81,
+      "yield_stability_pct": 72,
+      "expected_yield_gain_pct": 0,
+      "som_gain_pct": 0,
+      "nitrogen_balance_kg_ha": 0,
+      "sustainability_score": 74
     },
     "confidence": {
-      "level": "medium",
-      "label": "Satellite data good, crop table generic",
-      "sources_used": ["NASA POWER"]
+      "overall_score": 55,
+      "level": "Moderate",
+      "data_source": "NASA POWER",
+      "gee_enabled": false,
+      "satellite_coverage_pct": 60,
+      "calibration_note": "Crop values are generic and require local agronomist validation."
     },
     "rotations": [
       {
-        "rotation_id": "B",
+        "rank": 1,
         "name": "Wheat > Fava bean > Wheat",
-        "crops": ["Durum wheat", "Fava bean", "Durum wheat"],
-        "total_score": 7.4,
-        "status_color": "green",
-        "explain_text": "Strongest: soil health / nitrogen. Weakest: income / forage.",
-        "breakdown": { "soil": 0.73, "erosion": 0.81, "water": 0.72, "income": 0.61 }
+        "sequence": ["Durum wheat", "Fava bean", "Durum wheat"],
+        "composite_score": 74,
+        "soil_score": 73,
+        "water_score": 72,
+        "erosion_score": 81,
+        "income_score": 50,
+        "avg_yield_t_ha": 0,
+        "water_use_mm": 0,
+        "rationale": "Strongest and weakest pillars are calculated from NASA observations and crop assumptions."
       }
     ],
-    "monthly_telemetry": {
-      "months": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
-      "monthly_rain_mm": [70, 65, 55, 40, 25, 10, 3, 5, 35, 60, 75, 80],
-      "monthly_soil_moisture": [0.55, 0.58, 0.52, 0.45, 0.35, 0.25, 0.18, 0.2, 0.32, 0.48, 0.6, 0.62],
-      "monthly_ndvi": [0.55, 0.62, 0.68, 0.6, 0.38, 0.21, 0.18, 0.17, 0.2, 0.28, 0.42, 0.5],
-      "monthly_temp_c": [10, 11, 14, 17, 22, 27, 31, 31, 26, 21, 15, 11],
-      "monthly_temp_min_c": [4, 5, 7, 10, 14, 19, 22, 22, 18, 13, 8, 5]
-    },
     "bare_field_clock": {
-      "months": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
-      "heavy_rain_days": [0.8, 0.6, 0.4, 0.3, 0.1, 0.0, 0.0, 0.1, 0.4, 0.6, 0.5, 0.4],
-      "ndvi": [0.55, 0.62, 0.68, 0.6, 0.38, 0.21, 0.18, 0.17, 0.2, 0.28, 0.42, 0.5],
-      "exposed_heavy_rain_months": ["Oct"]
+      "bare_days_per_year": 0,
+      "baseline_bare_days": 0,
+      "cover_pct": 100,
+      "high_risk_months": [],
+      "erosion_risk_level": "Low",
+      "summary": "NDVI is unavailable without Earth Engine."
     },
     "sowing_window": {
-      "median_date": "14 Oct",
-      "earliest_date": "18 Sep",
-      "latest_date": "22 Nov",
-      "spread_days": 65,
-      "yearly_doy": { "2020": 285, "2021": 298, "2022": 315 }
+      "primary_crop": "Durum wheat",
+      "optimal_start": "18 Sep",
+      "optimal_end": "22 Nov",
+      "soil_moisture_trigger_pct": 45,
+      "surface_temp_window_c": "10-20°C",
+      "advisory": "Confirm the window with local agronomists."
     },
-    "risk_calendar": {},
+    "risk_calendar": {
+      "scenario": "normal",
+      "peak_risk_months": ["Aug", "Jul", "Jun"],
+      "months": []
+    },
     "agronomist_checklist": [
-      "Soil salinity and pH of this field",
-      "Local seed availability and prices",
-      "Local buyers / market price for the new crop",
-      "Disease history (chickpea blight, fava chocolate spot)",
-      "Sowing dates recommended by the local extension office"
+      {
+        "id": "soil-test",
+        "priority": "High",
+        "timing": "Before sowing",
+        "action": "Check soil salinity and pH",
+        "reason": "Confirms crop suitability and fertilizer needs."
+      }
     ],
     "caveats": [
       "Coarse satellite pixels (SMAP ~9 km, POWER ~50 km) may not match a single field.",

@@ -74,6 +74,59 @@ def _exposed_heavy_rain_months(heavy_rain_days, ndvi):
     ]
 
 
+def _contract_risk_calendar(profile, gee, scenario, slope):
+    ndvi = _monthly_gee_values(gee, "ndvi_clim")
+    wet = profile["wet_clim"]
+    heavy = profile["heavy_clim"]
+    temperatures = profile["monthly_temp_c"]
+    months = []
+    for index, month in enumerate(MONTHS):
+        drought = round(float(np.clip((1 - (wet[index] or 0)) * 100, 0, 100)))
+        erosion = round(float(np.clip(heavy[index] * 45 * (1 + slope / 20), 0, 100)))
+        heat = round(float(np.clip(((temperatures[index] or 0) - 18) * 6, 0, 100)))
+        pest = 0
+        values = {
+            "Moisture deficit": drought,
+            "Runoff & slope erosion": erosion,
+            "Thermal stress": heat,
+            "Pest pressure": pest,
+        }
+        dominant, dominant_value = max(values.items(), key=lambda item: item[1])
+        months.append({
+            "month": month,
+            "drought_risk": drought,
+            "erosion_risk": erosion,
+            "heat_risk": heat,
+            "pest_risk": pest,
+            "dominant_hazard": dominant if dominant_value >= 45 else "Low risk",
+        })
+    peak = sorted(months, key=lambda item: max(
+        item["drought_risk"], item["erosion_risk"], item["heat_risk"]
+    ), reverse=True)[:3]
+    return {
+        "scenario": scenario,
+        "peak_risk_months": [item["month"] for item in peak],
+        "months": months,
+        "raw": _risk_calendar(profile, gee),
+    }
+
+
+def _checklist():
+    return [
+        {"id": "soil-test", "priority": "High", "timing": "Before sowing",
+         "action": "Check soil salinity and pH", "reason": "Confirms crop suitability and fertilizer needs."},
+        {"id": "seed-market", "priority": "Medium", "timing": "Before purchase",
+         "action": "Confirm local seed availability, prices, and buyers",
+         "reason": "Validates the economic assumptions in the rotation comparison."},
+        {"id": "disease-history", "priority": "Medium", "timing": "Before rotation approval",
+         "action": "Review disease history for this field",
+         "reason": "Local disease pressure can change the best rotation."},
+        {"id": "sowing-date", "priority": "High", "timing": "Before autumn rains",
+         "action": "Confirm sowing dates with the local extension office",
+         "reason": "Rain onset is regional and should be checked against field conditions."},
+    ]
+
+
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
@@ -115,15 +168,58 @@ def analyze(request: AnalyzeRequest):
     rotations.sort(key=lambda item: item["total_score"], reverse=True)
     onset = profile["autumn_onset"]
     onset_values = list(onset.values())
+    best = rotations[0]
+    best_parts = best["breakdown"]
+    ndvi = _monthly_gee_values(profile["gee"], "ndvi_clim")
+    exposed_months = _exposed_heavy_rain_months(profile["heavy_clim"], ndvi)
+    bare_days = len(exposed_months) * 30
+    risk_calendar = _contract_risk_calendar(profile, profile["gee"], request.scenario, slope)
     return {
         "region_validated": 30 <= request.lat <= 38 and 7 <= request.lon <= 12,
-        "kpis": {"avg_rain_mm": round(mean_rain), "driest_year": min(rain, key=rain.get),
-                 "driest_year_mm": round(min(rain_values)), "heavy_rain_days_yr": round(sum(profile["heavy_clim"]), 1),
-                 "slope_deg": round(float(slope), 1)},
-        "confidence": {"level": "low" if len(rain) < 5 else "medium",
-                       "label": "Rainfall very variable" if cv > 0.3 else "Satellite data good, crop table generic",
-                       "sources_used": ["NASA POWER"] + (["SMAP", "MODIS", "SRTM"] if request.use_gee else [])},
-        "rotations": rotations,
+        "kpis": {
+            "soil_health_index": round(best_parts["soil"] * 100),
+            "water_savings_pct": round(best_parts["water"] * 100),
+            "erosion_reduction_pct": round(best_parts["erosion"] * 100),
+            "yield_stability_pct": round(best_parts["water"] * 100),
+            "expected_yield_gain_pct": 0,
+            "som_gain_pct": 0,
+            "nitrogen_balance_kg_ha": 0,
+            "sustainability_score": round(best["total_score"] * 10),
+            "avg_rain_mm": round(mean_rain),
+            "driest_year": int(min(rain, key=rain.get)),
+            "driest_year_mm": round(min(rain_values)),
+            "heavy_rain_days_yr": round(sum(profile["heavy_clim"]), 1),
+            "slope_deg": round(float(slope), 1),
+        },
+        "confidence": {
+            "overall_score": 70 if request.use_gee else 55,
+            "level": "Moderate" if len(rain) >= 5 else "Low",
+            "data_source": "NASA POWER" + (" + Google Earth Engine" if request.use_gee else ""),
+            "gee_enabled": request.use_gee,
+            "satellite_coverage_pct": 100 if request.use_gee else 60,
+            "calibration_note": "Crop values are generic and require local agronomist validation.",
+            "sources_used": ["NASA POWER"] + (["SMAP", "MODIS", "SRTM"] if request.use_gee else []),
+        },
+        "rotations": [
+            {
+                "rank": index + 1,
+                "name": item["name"],
+                "sequence": item["crops"],
+                "composite_score": round(item["total_score"] * 10),
+                "soil_score": round(item["breakdown"]["soil"] * 100),
+                "water_score": round(item["breakdown"]["water"] * 100),
+                "erosion_score": round(item["breakdown"]["erosion"] * 100),
+                "income_score": round(item["breakdown"]["income"] * 100),
+                "avg_yield_t_ha": 0,
+                "water_use_mm": 0,
+                "rationale": item["explain_text"],
+                "rotation_id": item["rotation_id"],
+                "total_score": item["total_score"],
+                "status_color": item["status_color"],
+                "breakdown": item["breakdown"],
+            }
+            for index, item in enumerate(rotations)
+        ],
         "monthly_telemetry": {
             "months": MONTHS,
             "monthly_rain_mm": profile["monthly_rain_mm"],
@@ -133,6 +229,13 @@ def analyze(request: AnalyzeRequest):
             "monthly_temp_min_c": profile["monthly_temp_min_c"],
         },
         "bare_field_clock": {
+            "bare_days_per_year": bare_days,
+            "baseline_bare_days": bare_days,
+            "cover_pct": round((1 - bare_days / 365) * 100),
+            "high_risk_months": exposed_months,
+            "erosion_risk_level": "Elevated" if exposed_months else "Low",
+            "summary": "NDVI is unavailable without Earth Engine." if not ndvi else
+                "Months with low canopy cover and heavy rain overlap.",
             "months": MONTHS,
             "heavy_rain_days": profile["heavy_clim"],
             "ndvi": _monthly_gee_values(profile["gee"], "ndvi_clim"),
@@ -140,16 +243,19 @@ def analyze(request: AnalyzeRequest):
                 profile["heavy_clim"], _monthly_gee_values(profile["gee"], "ndvi_clim")
             ),
         },
-        "sowing_window": {"median_date": doy_to_text(np.median(onset_values)) if onset_values else None,
+        "sowing_window": {"primary_crop": request.custom_rotation[0],
+                          "optimal_start": doy_to_text(min(onset_values)) if onset_values else "",
+                          "optimal_end": doy_to_text(max(onset_values)) if onset_values else "",
+                          "soil_moisture_trigger_pct": 45,
+                          "surface_temp_window_c": "10-20°C",
+                          "advisory": "Confirm the window with local agronomists.",
+                          "median_date": doy_to_text(np.median(onset_values)) if onset_values else None,
                           "earliest_date": doy_to_text(min(onset_values)) if onset_values else None,
                           "latest_date": doy_to_text(max(onset_values)) if onset_values else None,
                           "spread_days": int(max(onset_values) - min(onset_values)) if onset_values else 0,
                           "yearly_doy": onset},
-        "risk_calendar": _risk_calendar(profile, profile["gee"]),
-        "agronomist_checklist": ["Soil salinity and pH of this field", "Local seed availability and prices",
-                                 "Local buyers / market price for the new crop",
-                                 "Disease history (chickpea blight, fava chocolate spot)",
-                                 "Sowing dates recommended by the local extension office"],
+        "risk_calendar": risk_calendar,
+        "agronomist_checklist": _checklist(),
         "caveats": ["Coarse satellite pixels (SMAP ~9 km, POWER ~50 km) may not match a single field.",
                     "Crop responses use generic regional assumptions; verify with local extension services."],
     }
