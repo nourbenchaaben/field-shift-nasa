@@ -17,21 +17,27 @@ import os
 import ee
 import pandas as pd
 
-PROJECT = os.environ.get("GEE_PROJECT", "your-gee-project-id")
+PROJECT = os.environ.get("GEE_PROJECT")
 CACHE_DIR = "cache"
 
 NDVI_ID, NDVI_BAND = "MODIS/061/MOD13Q1", "NDVI"
-SMAP_ID, SMAP_BAND = "NASA/SMAP/SPL4SMGP/007", "sm_rootzone"
+SMAP_ID, SMAP_BAND = "NASA/SMAP/SPL4SMGP/008", "sm_rootzone_wetness"
 IMERG_ID, IMERG_BAND = "NASA/GPM_L3/IMERG_V07", "precipitation"   # mm/hr, 30-min steps
 SRTM_ID = "USGS/SRTMGL1_003"
 
 
 def init():
+    if not PROJECT:
+        raise RuntimeError(
+            "GEE_PROJECT is not set. Set it to a Google Cloud project with Earth Engine enabled."
+        )
     try:
         ee.Initialize(project=PROJECT)
-    except Exception:
-        ee.Authenticate()
-        ee.Initialize(project=PROJECT)
+    except Exception as error:
+        raise RuntimeError(
+            "Earth Engine is not initialized. Run 'earthengine authenticate' "
+            "and set GEE_PROJECT in the same terminal used to start FastAPI."
+        ) from error
 
 
 def _monthly(col_id, band, area, scale, y0, y1, how="mean", factor=1.0):
