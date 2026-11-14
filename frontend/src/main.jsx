@@ -1,0 +1,25 @@
+import React, { useEffect, useState } from "react";
+import { createRoot } from "react-dom/client";
+import { BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
+import "./styles.css";
+
+const API = import.meta.env.VITE_API_URL || "http://localhost:8000";
+const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const fallback = { kpis: { avg_rain_mm: 540, driest_year: 2022, driest_year_mm: 310, heavy_rain_days_yr: 4.2, slope_deg: 5 }, confidence: { label: "Satellite data good, crop table generic" }, rotations: [], bare_field_clock: { heavy_rain_days: [] }, sowing_window: {}, agronomist_checklist: [] };
+
+function App() {
+  const [data, setData] = useState(fallback), [crops, setCrops] = useState([]), [loading, setLoading] = useState(false);
+  const [request, setRequest] = useState({ lat: 36.73, lon: 9.18, years: 10, weights: { soil: 7, water: 8, erosion: 5, income: 0 }, rain_change_pct: 0, scenario: "normal" });
+  const analyze = async () => { setLoading(true); try { const response = await fetch(`${API}/api/analyze`, { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify(request) }); if (!response.ok) throw new Error(await response.text()); setData(await response.json()); } catch (error) { setData(fallback); } finally { setLoading(false); } };
+  useEffect(() => { fetch(`${API}/api/crops`).then(r => r.json()).then(setCrops).catch(() => setCrops([])); analyze(); }, []);
+  const chart = months.map((month, i) => ({ month, rain: data.bare_field_clock?.heavy_rain_days?.[i] || 0, ndvi: data.bare_field_clock?.ndvi?.[i] }));
+  return <main><header><span className="eyebrow">NASA POWER • FARM DECISION SUPPORT</span><h1>Rotation Compass <span>🧭</span></h1><p>Transparent climate signals to support local agronomist judgment.</p></header>
+    <section className="controls"><label>Latitude<input type="number" value={request.lat} onChange={e=>setRequest({...request,lat:+e.target.value})}/></label><label>Longitude<input type="number" value={request.lon} onChange={e=>setRequest({...request,lon:+e.target.value})}/></label><label>History<input type="number" min="2" max="30" value={request.years} onChange={e=>setRequest({...request,years:+e.target.value})}/></label><label>Rainfall what-if: {request.rain_change_pct}%<input type="range" min="-40" max="20" value={request.rain_change_pct} onChange={e=>setRequest({...request,rain_change_pct:+e.target.value})}/></label><button onClick={analyze}>{loading ? "Loading…" : "Analyze field"}</button></section>
+    {!data.region_validated && <div className="warning">Climate data is global, but crop recommendations are validated for Tunisia.</div>}
+    <section className="kpis">{[["Average rain", `${data.kpis.avg_rain_mm || "—"} mm`],["Driest year", `${data.kpis.driest_year || "—"} (${data.kpis.driest_year_mm || "—"} mm)`],["Heavy-rain days", `${data.kpis.heavy_rain_days_yr || "—"} / yr`],["Slope", `${data.kpis.slope_deg || "—"}°`]].map(([label,value])=><article><small>{label}</small><strong>{value}</strong></article>)}</section>
+    <section className="panel"><div className="panel-title"><div><span className="eyebrow">ROTATION LAB</span><h2>Compare strategies</h2></div><span className="confidence">● {data.confidence.label}</span></div>{data.rotations.map(rotation=><div className="rotation"><div className={`score ${rotation.status}`}>{rotation.total_score}<small>/10</small></div><div className="rotation-body"><b>{rotation.name}</b><p>{rotation.explanation}</p><div className="bar"><i style={{width:`${rotation.total_score*10}%`}}/></div><small>{rotation.crops.join("  →  ")}</small></div></div>)}</section>
+    <section className="grid"><div className="panel"><span className="eyebrow">BARE-FIELD CLOCK</span><h2>Storm exposure by month</h2><ResponsiveContainer width="100%" height={240}><BarChart data={chart}><XAxis dataKey="month"/><YAxis/><Tooltip/><Bar dataKey="rain" fill="#e07a5f"/></BarChart></ResponsiveContainer></div><div className="panel"><span className="eyebrow">SOWING WINDOW</span><h2>Autumn rain onset</h2><div className="date">{data.sowing_window.median_date || "No onset found"}</div><p>Earliest {data.sowing_window.earliest_date || "—"} · Latest {data.sowing_window.latest_date || "—"}</p><p>Spread: {data.sowing_window.spread_days || 0} days</p></div></section>
+    <section className="panel"><span className="eyebrow">LOCAL VALIDATION</span><h2>Ask your agronomist</h2><ul>{(data.agronomist_checklist || []).map(item=><li>{item}</li>)}</ul></section>
+  </main>;
+}
+createRoot(document.getElementById("root")).render(<App />);

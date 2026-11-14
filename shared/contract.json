@@ -1,0 +1,25 @@
+{
+  "request": {
+    "lat": 36.73,
+    "lon": 9.18,
+    "years": 10,
+    "use_gee": false,
+    "slope_deg": 5,
+    "weights": { "soil": 7, "water": 8, "erosion": 5, "income": 0 },
+    "scenario": "normal",
+    "replay_year": null,
+    "rain_change_pct": 0,
+    "custom_rotation": ["Durum wheat", "Fava bean", "Barley + vetch"]
+  },
+  "response": {
+    "region_validated": true,
+    "kpis": {},
+    "confidence": {},
+    "rotations": [],
+    "bare_field_clock": {},
+    "sowing_window": {},
+    "risk_calendar": {},
+    "agronomist_checklist": [],
+    "caveats": []
+  }
+}

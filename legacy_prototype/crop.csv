@@ -1,0 +1,5 @@
+crop,water_need_1to3,nitrogen_fixing_0to1,erosion_cover_months,sensitive_months,typical_sowing,typical_harvest,market_1to3,forage_0to3,cycle_days,source,confidence,notes
+Durum wheat,2,0.0,"12;1;2;3;4;5","3;4",Nov-Dec,May-Jun,3,0,,TO VERIFY (FAO EcoCrop / local extension office),low,Starting values from the prototype. Replace with sourced values.
+Fava bean,2,1.0,"12;1;2;3;4","2;3",Oct-Nov,Apr-May,2,1,,TO VERIFY (FAO EcoCrop / local extension office),low,Legume: fixes nitrogen. Check chocolate-spot disease risk.
+Barley + vetch,1,0.6,"11;12;1;2;3;4;5","3",Oct-Nov,Apr-May,2,3,,TO VERIFY (FAO EcoCrop / local extension office),low,Forage mix. Vetch fixes nitrogen; barley protects soil.
+Chickpea,1,1.0,"3;4;5;6","4;5",Feb-Mar (or winter-sown),Jun-Jul,2,0,,TO VERIFY (FAO EcoCrop / local extension office),low,Sowing season depends on variety and region. Check blight risk.
