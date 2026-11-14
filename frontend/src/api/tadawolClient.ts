@@ -62,6 +62,10 @@ export function buildContractRequest(
 
   // Deduplicate while preserving sequence order for custom_rotation
   const uniqueSequence = Array.from(new Set(activeCrops));
+  const customRotation = [...uniqueSequence];
+  while (customRotation.length < 3) {
+    customRotation.push(['Durum wheat', 'Fava bean', 'Barley + vetch'][customRotation.length]);
+  }
 
   return {
     lat: Number(profile.coordinates.lat.toFixed(4)),
@@ -78,7 +82,7 @@ export function buildContractRequest(
     scenario: overrides.scenario ?? 'normal',
     replay_year: overrides.replay_year ?? null,
     rain_change_pct: overrides.rain_change_pct ?? 0,
-    custom_rotation: overrides.custom_rotation ?? uniqueSequence.slice(0, 3),
+    custom_rotation: overrides.custom_rotation ?? customRotation.slice(0, 3),
   };
 }
 

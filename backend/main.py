@@ -14,7 +14,12 @@ from .engine.scenarios import select_wet_climate
 from .engine.scoring import explain, score_rotation, status
 
 app = FastAPI(title="Rotation Compass API", version="1.0.0")
-app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173"], allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 class AnalyzeRequest(BaseModel):
@@ -23,7 +28,9 @@ class AnalyzeRequest(BaseModel):
     years: int = Field(10, ge=5, le=20)
     use_gee: bool = False
     slope_deg: float | None = Field(5, ge=0, le=90)
-    weights: dict[str, float] = {"soil": 7, "water": 8, "erosion": 5, "income": 0}
+    weights: dict[str, float] = Field(
+        default={"soil": 7, "water": 8, "erosion": 5, "income": 0}
+    )
     scenario: Literal["normal", "bad_year"] = "normal"
     replay_year: int | None = None
     rain_change_pct: int = Field(0, ge=-40, le=20)
@@ -137,8 +144,19 @@ def crops():
     return CROPS
 
 
+def _validate_weights(weights: dict[str, float]) -> None:
+    expected = {"soil", "water", "erosion", "income"}
+    if set(weights) != expected:
+        raise HTTPException(status_code=422, detail="weights must contain soil, water, erosion, and income")
+    if any(value < 0 or value > 10 for value in weights.values()):
+        raise HTTPException(status_code=422, detail="weights must be between 0 and 10")
+    if sum(weights.values()) <= 0:
+        raise HTTPException(status_code=422, detail="at least one priority weight must be greater than zero")
+
+
 @app.post("/api/analyze")
 def analyze(request: AnalyzeRequest):
+    _validate_weights(request.weights)
     try:
         profile = get_climate_profile(request.lat, request.lon, request.years, request.use_gee)
     except Exception as error:
