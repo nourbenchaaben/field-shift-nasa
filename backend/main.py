@@ -57,6 +57,23 @@ def _risk_calendar(profile, gee):
     return {"months": MONTHS, "rows": rows}
 
 
+def _monthly_gee_values(gee, key):
+    values = (gee or {}).get(key, {})
+    return [values.get(str(month), values.get(month)) for month in range(1, 13)]
+
+
+def _exposed_heavy_rain_months(heavy_rain_days, ndvi):
+    if not ndvi:
+        return []
+    return [
+        MONTHS[month - 1]
+        for month in range(1, 13)
+        if ndvi[month - 1] is not None
+        and ndvi[month - 1] < 0.25
+        and heavy_rain_days[month - 1] > 0.2
+    ]
+
+
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
@@ -111,13 +128,18 @@ def analyze(request: AnalyzeRequest):
             "months": MONTHS,
             "monthly_rain_mm": profile["monthly_rain_mm"],
             "monthly_soil_moisture": profile["wet_clim"],
-            "monthly_ndvi": [(profile["gee"] or {}).get("ndvi_clim", {}).get(str(m)) for m in range(1, 13)],
+            "monthly_ndvi": _monthly_gee_values(profile["gee"], "ndvi_clim"),
             "monthly_temp_c": profile["monthly_temp_c"],
             "monthly_temp_min_c": profile["monthly_temp_min_c"],
         },
-        "bare_field_clock": {"months": MONTHS, "heavy_rain_days": profile["heavy_clim"],
-                             "ndvi": [(profile["gee"] or {}).get("ndvi_clim", {}).get(str(m)) for m in range(1, 13)],
-                             "exposed_heavy_rain_months": []},
+        "bare_field_clock": {
+            "months": MONTHS,
+            "heavy_rain_days": profile["heavy_clim"],
+            "ndvi": _monthly_gee_values(profile["gee"], "ndvi_clim"),
+            "exposed_heavy_rain_months": _exposed_heavy_rain_months(
+                profile["heavy_clim"], _monthly_gee_values(profile["gee"], "ndvi_clim")
+            ),
+        },
         "sowing_window": {"median_date": doy_to_text(np.median(onset_values)) if onset_values else None,
                           "earliest_date": doy_to_text(min(onset_values)) if onset_values else None,
                           "latest_date": doy_to_text(max(onset_values)) if onset_values else None,
