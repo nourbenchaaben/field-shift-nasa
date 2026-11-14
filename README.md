@@ -34,11 +34,14 @@ from NASA POWER and its `reference_et_mm` values come from Meteomatics.
 Missing credentials or unavailable Meteomatics parameters are reported in
 `meteomatics.error`; the NASA response still succeeds.
 
-Earth Engine is optional. Install the backend requirements, run
-`earthengine authenticate`, set `$env:GEE_PROJECT` to a Google Cloud project
-with Earth Engine enabled, and send `"use_gee": true`. With `slope_deg: null`,
-SRTM supplies the automatic slope; a numeric `slope_deg` remains a manual
-override. SMAP supplies water wetness and MODIS supplies NDVI/bare-field risk.
+Earth Engine is preferred automatically. Install the backend requirements, run
+`earthengine authenticate`, and set `$env:GEE_PROJECT` to a Google Cloud project
+with Earth Engine enabled. The frontend no longer asks the user to select a
+source: the backend tries Earth Engine first and falls back to NASA POWER if
+Earth Engine is unavailable. The response reports the actual source and
+`confidence.fallback_reason` when fallback occurs. With `slope_deg: null`, SRTM
+supplies the automatic slope; a numeric `slope_deg` remains a manual override.
+SMAP supplies water wetness and MODIS supplies NDVI/bare-field risk.
 
 Run the frontend:
 

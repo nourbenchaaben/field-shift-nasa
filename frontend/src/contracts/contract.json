@@ -3,7 +3,7 @@
     "lat": 36.73,
     "lon": 9.18,
     "years": 10,
-    "use_gee": false,
+    "use_gee": true,
     "use_meteomatics": false,
     "slope_deg": null,
     "weights": { "soil": 7, "water": 8, "erosion": 5, "income": 0 },

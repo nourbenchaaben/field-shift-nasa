@@ -30,7 +30,6 @@ import {
 
 export interface ContractSettings {
   years: number;
-  use_gee: boolean;
   slope_deg: number | null;
   weights: OptimizationWeights;
   scenario: ClimateScenario;
@@ -77,7 +76,6 @@ const STORAGE_KEY = 'tadawol_platform_state_v2';
 
 const DEFAULT_CONTRACT_SETTINGS: ContractSettings = {
   years: DEFAULT_CONTRACT_REQUEST.years,
-  use_gee: DEFAULT_CONTRACT_REQUEST.use_gee,
   slope_deg: DEFAULT_CONTRACT_REQUEST.slope_deg,
   weights: { ...DEFAULT_CONTRACT_REQUEST.weights },
   scenario: DEFAULT_CONTRACT_REQUEST.scenario,
@@ -169,7 +167,6 @@ export const FarmProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const activeStrat = pendingProposal ? pendingProposal.proposedStrategy : strategy;
     return buildContractRequest(profile, activeStrat, {
       years: contractSettings.years,
-      use_gee: contractSettings.use_gee,
       slope_deg: contractSettings.slope_deg,
       weights: contractSettings.weights,
       scenario: contractSettings.scenario,

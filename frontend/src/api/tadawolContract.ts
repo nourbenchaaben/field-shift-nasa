@@ -16,7 +16,7 @@ export interface TadawolApiRequest {
   lat: number;
   lon: number;
   years: number;
-  use_gee: boolean;
+  use_gee?: boolean;
   use_meteomatics?: boolean;
   slope_deg: number | null;
   weights: OptimizationWeights;
@@ -44,6 +44,7 @@ export interface ContractConfidence {
   gee_enabled: boolean;
   satellite_coverage_pct: number;
   calibration_note: string;
+  fallback_reason?: string | null;
 }
 
 export interface ContractRotationOption {
@@ -142,7 +143,7 @@ export const DEFAULT_CONTRACT_REQUEST: TadawolApiRequest = {
   lat: 36.73,
   lon: 9.18,
   years: 10,
-  use_gee: false,
+  use_gee: true,
   use_meteomatics: false,
   slope_deg: null,
   weights: { soil: 7, water: 8, erosion: 5, income: 0 },

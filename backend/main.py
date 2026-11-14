@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import numpy as np
@@ -15,6 +16,7 @@ from .engine.scenarios import select_wet_climate
 from .engine.scoring import explain, score_rotation, status
 
 app = FastAPI(title="Rotation Compass API", version="1.0.0")
+logger = logging.getLogger(__name__)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -27,7 +29,7 @@ class AnalyzeRequest(BaseModel):
     lat: float = Field(36.73, ge=-90, le=90)
     lon: float = Field(9.18, ge=-180, le=180)
     years: int = Field(10, ge=5, le=20)
-    use_gee: bool = False
+    use_gee: bool = True
     use_meteomatics: bool = False
     slope_deg: float | None = Field(None, ge=0, le=90)
     weights: dict[str, float] = Field(
@@ -199,10 +201,16 @@ def analyze(request: AnalyzeRequest):
     if len(custom_rotation) != 3 or any(crop is None for crop in custom_rotation):
         unknown = [original for original, canonical in zip(request.custom_rotation, custom_rotation) if canonical is None]
         raise HTTPException(status_code=422, detail=f"Unknown crop(s) in custom_rotation: {unknown}")
+    gee_fallback_reason = None
     try:
         profile = get_climate_profile(request.lat, request.lon, request.years, request.use_gee)
-    except Exception as error:
-        raise HTTPException(status_code=502, detail=f"Climate data unavailable: {error}") from error
+    except Exception as gee_error:
+        logger.warning("Earth Engine unavailable; falling back to NASA POWER: %s", gee_error)
+        gee_fallback_reason = str(gee_error)
+        try:
+            profile = get_climate_profile(request.lat, request.lon, request.years, False)
+        except Exception as error:
+            raise HTTPException(status_code=502, detail=f"Climate data unavailable: {error}") from error
     meteomatics = None
     if request.use_meteomatics:
         try:
@@ -265,11 +273,12 @@ def analyze(request: AnalyzeRequest):
         "confidence": {
             "overall_score": 70 if request.use_gee else 55,
             "level": "Moderate" if len(rain) >= 5 else "Low",
-            "data_source": "NASA POWER" + (" + Google Earth Engine" if request.use_gee else ""),
-            "gee_enabled": request.use_gee,
-            "satellite_coverage_pct": 100 if request.use_gee else 60,
+            "data_source": "NASA POWER" + (" + Google Earth Engine" if profile["gee"] else ""),
+            "gee_enabled": profile["gee"] is not None,
+            "satellite_coverage_pct": 100 if profile["gee"] else 60,
             "calibration_note": "Crop values are generic and require local agronomist validation.",
-            "sources_used": ["NASA POWER"] + (["SMAP", "MODIS", "SRTM"] if request.use_gee else []),
+            "sources_used": ["NASA POWER"] + (["SMAP", "MODIS", "SRTM"] if profile["gee"] else []),
+            "fallback_reason": gee_fallback_reason,
         },
         "meteomatics": meteomatics,
         "rotations": [

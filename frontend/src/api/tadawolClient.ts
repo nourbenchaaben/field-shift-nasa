@@ -72,7 +72,7 @@ export function buildContractRequest(
     lat: Number(profile.coordinates.lat.toFixed(4)),
     lon: Number(profile.coordinates.lng.toFixed(4)),
     years: overrides.years ?? 10,
-    use_gee: overrides.use_gee ?? false,
+    use_gee: true,
     slope_deg: overrides.slope_deg ?? null,
     weights: overrides.weights ?? {
       soil: strategy.parameters.organicFocus ? 9 : 7,
@@ -96,6 +96,7 @@ export function simulateContractResponse(
   profile: FarmerProfile,
   strategy: RotationStrategy
 ): TadawolApiResponse {
+  const geeEnabled = req.use_gee ?? true;
   const totalWeight = Math.max(
     1,
     req.weights.soil + req.weights.water + req.weights.erosion + req.weights.income
@@ -237,13 +238,13 @@ export function simulateContractResponse(
       sustainability_score: baseScore,
     },
     confidence: {
-      overall_score: req.use_gee ? 92 : 84,
+      overall_score: geeEnabled ? 92 : 84,
       level: req.use_gee ? 'High' : 'High',
-      data_source: req.use_gee
+      data_source: geeEnabled
         ? 'Google Earth Engine (Sentinel-2 + SMAP + CHIRPS) + Local Farm Profile'
         : 'NASA SMAP L4 + MODIS LST + Local Farm Baseline',
-      gee_enabled: req.use_gee,
-      satellite_coverage_pct: req.use_gee ? 98 : 91,
+      gee_enabled: geeEnabled,
+      satellite_coverage_pct: geeEnabled ? 98 : 91,
       calibration_note: `Validated for ${req.lat.toFixed(2)}°N, ${req.lon.toFixed(2)}°E (${profile.soilType}, ${slope}° slope) across ${req.years}-year horizon.`,
     },
     rotations,
@@ -299,7 +300,7 @@ export function simulateContractResponse(
       },
     ],
     caveats: [
-      req.use_gee
+      geeEnabled
         ? 'Google Earth Engine cloud-masked Sentinel-2 composites assume <15% cloud cover during peak tillering.'
         : 'Running in fast local NASA baseline mode (use_gee=false); enable GEE for 10m sub-parcel optical indices.',
       `Climate simulation applies ${req.rain_change_pct >= 0 ? '+' : ''}${req.rain_change_pct}% rainfall shift under "${req.scenario}" scenario over ${req.years} years.`,

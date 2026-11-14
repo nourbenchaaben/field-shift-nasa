@@ -550,53 +550,14 @@ export const RotationLabPage: React.FC = () => {
                       Multi-Objective Weights &amp; Climate Scenario (Shared Engine Contract)
                     </div>
                     <div className="text-[11px] text-[#6F6F6F]">
-                      Choose the climate data source for the next analysis. NASA POWER is the
-                      fast baseline; Earth Engine adds SMAP, MODIS, and SRTM.
+                      Earth Engine is preferred automatically for higher-precision satellite
+                      data. NASA POWER is used automatically if Earth Engine is unavailable.
                     </div>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span
-                      className={`text-[11px] font-bold ${
-                        contractSettings.use_gee ? 'text-[#777777]' : 'text-[#111111]'
-                      }`}
-                    >
-                      NASA POWER
-                    </span>
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-checked={contractSettings.use_gee}
-                      aria-label="Switch climate data source"
-                      onClick={() =>
-                        updateContractSettings({ use_gee: !contractSettings.use_gee })
-                      }
-                      className={`relative w-12 h-6 rounded-full transition cursor-pointer ${
-                        contractSettings.use_gee ? 'bg-[#00873A]' : 'bg-[#777777]'
-                      }`}
-                    >
-                      <span
-                        className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-transform ${
-                          contractSettings.use_gee ? 'translate-x-7' : 'translate-x-1'
-                        }`}
-                      />
-                    </button>
-                    <span
-                      className={`text-[11px] font-bold ${
-                        contractSettings.use_gee ? 'text-[#111111]' : 'text-[#777777]'
-                      }`}
-                    >
-                      Earth Engine
-                    </span>
                   </div>
                 </div>
                 <div className="rounded-lg bg-[#F5F4F0] px-3 py-2 text-[11px] text-[#474747]">
-                  Active source:{' '}
-                  <strong>
-                    {contractSettings.use_gee
-                      ? 'Earth Engine (SMAP + MODIS + SRTM)'
-                      : 'NASA POWER'}
-                  </strong>
-                  . Click Analyze/Sync to apply this choice.
+                  Active policy: <strong>Earth Engine first, NASA POWER fallback</strong>. The
+                  response identifies the source actually used.
                 </div>
 
                 {/* 4 Weight Sliders: soil, water, erosion, income */}
