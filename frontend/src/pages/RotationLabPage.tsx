@@ -634,7 +634,9 @@ export const RotationLabPage: React.FC = () => {
                     <div className="flex justify-between text-[11px] font-bold text-[#474747]">
                       <span>Field Slope</span>
                       <span className="font-mono-tech text-[#111111]">
-                        {contractSettings.slope_deg}°
+                        {contractSettings.slope_deg === null
+                          ? 'Automatic (SRTM)'
+                          : `${contractSettings.slope_deg}°`}
                       </span>
                     </div>
                     <input
@@ -642,7 +644,7 @@ export const RotationLabPage: React.FC = () => {
                       min={0}
                       max={15}
                       step={1}
-                      value={contractSettings.slope_deg}
+                      value={contractSettings.slope_deg ?? 0}
                       onChange={(e) =>
                         updateContractSettings({ slope_deg: Number(e.target.value) })
                       }

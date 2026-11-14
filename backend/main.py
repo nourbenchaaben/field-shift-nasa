@@ -29,7 +29,7 @@ class AnalyzeRequest(BaseModel):
     years: int = Field(10, ge=5, le=20)
     use_gee: bool = False
     use_meteomatics: bool = False
-    slope_deg: float | None = Field(5, ge=0, le=90)
+    slope_deg: float | None = Field(None, ge=0, le=90)
     weights: dict[str, float] = Field(
         default={"soil": 7, "water": 8, "erosion": 5, "income": 0}
     )

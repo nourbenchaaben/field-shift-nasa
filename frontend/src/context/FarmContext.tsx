@@ -31,7 +31,7 @@ import {
 export interface ContractSettings {
   years: number;
   use_gee: boolean;
-  slope_deg: number;
+  slope_deg: number | null;
   weights: OptimizationWeights;
   scenario: ClimateScenario;
   replay_year: number | null;

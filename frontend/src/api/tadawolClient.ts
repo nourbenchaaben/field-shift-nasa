@@ -73,7 +73,7 @@ export function buildContractRequest(
     lon: Number(profile.coordinates.lng.toFixed(4)),
     years: overrides.years ?? 10,
     use_gee: overrides.use_gee ?? false,
-    slope_deg: overrides.slope_deg ?? 5,
+    slope_deg: overrides.slope_deg ?? null,
     weights: overrides.weights ?? {
       soil: strategy.parameters.organicFocus ? 9 : 7,
       water: Math.min(10, Math.max(2, Math.round(strategy.parameters.waterConservationPct / 4))),
@@ -112,7 +112,8 @@ export function simulateContractResponse(
   const scenarioRainShift =
     req.rain_change_pct + (req.scenario === 'bad_year' ? -20 : 0);
 
-  const slopePenalty = Math.max(0, (req.slope_deg - 3) * 2.2);
+  const slope = req.slope_deg ?? 5;
+  const slopePenalty = Math.max(0, (slope - 3) * 2.2);
   const baseScore = strategy.summaryMetrics.sustainabilityScore;
 
   const waterSavings = Math.min(
@@ -135,7 +136,7 @@ export function simulateContractResponse(
   // Bare field clock
   const bareDays = Math.max(
     24,
-    Math.min(115, Math.round(62 - erosionW * 35 - (strategy.parameters.organicFocus ? 16 : 0) + req.slope_deg * 1.4))
+    Math.min(115, Math.round(62 - erosionW * 35 - (strategy.parameters.organicFocus ? 16 : 0) + slope * 1.4))
   );
   const coverPct = Math.round(((365 - bareDays) / 365) * 100);
 
@@ -190,7 +191,7 @@ export function simulateContractResponse(
       income_score: Math.min(95, Math.round(70 + strategy.summaryMetrics.projectedYieldGainPct)),
       avg_yield_t_ha: Number((5.2 * (1 + strategy.summaryMetrics.projectedYieldGainPct / 100)).toFixed(2)),
       water_use_mm: Math.round(375 * (1 - waterSavings / 100)),
-      rationale: `Matches farmer weights (Soil ${req.weights.soil}, Water ${req.weights.water}, Erosion ${req.weights.erosion}, Income ${req.weights.income}) under ${req.scenario} climate on ${req.slope_deg}° slope.`,
+      rationale: `Matches farmer weights (Soil ${req.weights.soil}, Water ${req.weights.water}, Erosion ${req.weights.erosion}, Income ${req.weights.income}) under ${req.scenario} climate on ${slope}° slope.`,
     },
     {
       rank: 2,
@@ -243,7 +244,7 @@ export function simulateContractResponse(
         : 'NASA SMAP L4 + MODIS LST + Local Farm Baseline',
       gee_enabled: req.use_gee,
       satellite_coverage_pct: req.use_gee ? 98 : 91,
-      calibration_note: `Validated for ${req.lat.toFixed(2)}°N, ${req.lon.toFixed(2)}°E (${profile.soilType}, ${req.slope_deg}° slope) across ${req.years}-year horizon.`,
+      calibration_note: `Validated for ${req.lat.toFixed(2)}°N, ${req.lon.toFixed(2)}°E (${profile.soilType}, ${slope}° slope) across ${req.years}-year horizon.`,
     },
     rotations,
     bare_field_clock: {
@@ -251,8 +252,8 @@ export function simulateContractResponse(
       baseline_bare_days: 148,
       cover_pct: coverPct,
       high_risk_months: ['Sep', 'Oct'],
-      erosion_risk_level: req.slope_deg >= 8 ? 'Elevated' : bareDays <= 55 ? 'Low' : 'Moderate',
-      summary: `Soil stays covered ${coverPct}% of the year (${bareDays} bare days vs. 148 baseline), cutting autumn sheet erosion on ${req.slope_deg}° slopes.`,
+      erosion_risk_level: slope >= 8 ? 'Elevated' : bareDays <= 55 ? 'Low' : 'Moderate',
+      summary: `Soil stays covered ${coverPct}% of the year (${bareDays} bare days vs. 148 baseline), cutting autumn sheet erosion on ${slope}° slopes.`,
     },
     sowing_window: {
       primary_crop: primaryCrop,
@@ -272,7 +273,7 @@ export function simulateContractResponse(
         id: 'chk-1',
         priority: 'High',
         timing: 'Pre-Sowing (Oct)',
-        action: `Maintain crop residue mulch across ${req.slope_deg}° slope before first autumn storm.`,
+        action: `Maintain crop residue mulch across ${slope}° slope before first autumn storm.`,
         reason: `Reduces topsoil runoff by ${erosionReduction}% during peak October rainfall.`,
       },
       {
@@ -302,9 +303,9 @@ export function simulateContractResponse(
         ? 'Google Earth Engine cloud-masked Sentinel-2 composites assume <15% cloud cover during peak tillering.'
         : 'Running in fast local NASA baseline mode (use_gee=false); enable GEE for 10m sub-parcel optical indices.',
       `Climate simulation applies ${req.rain_change_pct >= 0 ? '+' : ''}${req.rain_change_pct}% rainfall shift under "${req.scenario}" scenario over ${req.years} years.`,
-      req.slope_deg >= 6
-        ? `Terrain slope (${req.slope_deg}°) warrants contour seeding and zero bare-fallow windows during October–November.`
-        : `Moderate terrain slope (${req.slope_deg}°) supports reduced-till residue management without terracing.`,
+      slope >= 6
+        ? `Terrain slope (${slope}°) warrants contour seeding and zero bare-fallow windows during October–November.`
+        : `Moderate terrain slope (${slope}°) supports reduced-till residue management without terracing.`,
     ],
   };
 }

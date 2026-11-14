@@ -18,7 +18,7 @@ export interface TadawolApiRequest {
   years: number;
   use_gee: boolean;
   use_meteomatics?: boolean;
-  slope_deg: number;
+  slope_deg: number | null;
   weights: OptimizationWeights;
   scenario: ClimateScenario;
   replay_year: number | null;
@@ -144,7 +144,7 @@ export const DEFAULT_CONTRACT_REQUEST: TadawolApiRequest = {
   years: 10,
   use_gee: false,
   use_meteomatics: false,
-  slope_deg: 5,
+  slope_deg: null,
   weights: { soil: 7, water: 8, erosion: 5, income: 0 },
   scenario: 'normal',
   replay_year: null,
