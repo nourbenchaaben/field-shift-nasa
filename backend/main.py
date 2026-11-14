@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any
 
 import numpy as np
 from fastapi import FastAPI, HTTPException
@@ -31,7 +31,7 @@ class AnalyzeRequest(BaseModel):
     weights: dict[str, float] = Field(
         default={"soil": 7, "water": 8, "erosion": 5, "income": 0}
     )
-    scenario: Literal["normal", "bad_year"] = "normal"
+    scenario: str = "normal"
     replay_year: int | None = None
     rain_change_pct: int = Field(0, ge=-40, le=20)
     custom_rotation: list[str] = ["Durum wheat", "Fava bean", "Barley + vetch"]
@@ -154,9 +154,43 @@ def _validate_weights(weights: dict[str, float]) -> None:
         raise HTTPException(status_code=422, detail="at least one priority weight must be greater than zero")
 
 
+def _canonical_scenario(value: str) -> str:
+    aliases = {
+        "drought": "bad_year",
+        "heatwave": "bad_year",
+        "wet": "normal",
+    }
+    scenario = aliases.get(value, value)
+    if scenario not in {"normal", "bad_year"}:
+        raise HTTPException(status_code=422, detail="scenario must be normal or bad_year")
+    return scenario
+
+
+def _canonical_crop(value: str) -> str | None:
+    aliases = {
+        "Durum Wheat": "Durum wheat",
+        "Chickpeas": "Chickpea",
+        "Fava Beans": "Fava bean",
+        "Winter Barley": "Barley + vetch",
+        "Barley": "Barley + vetch",
+        "Grain Sorghum": "Oats",
+        "Oilseed Sunflower": "Rapeseed / Colza",
+        "Winter Canola": "Rapeseed / Colza",
+        "Red Lentils": "Lentil",
+        "Alfalfa Forage": "Alfalfa",
+        "Crimson Clover Cover": "Fava bean",
+    }
+    return aliases.get(value, value if value in CROPS else None)
+
+
 @app.post("/api/analyze")
 def analyze(request: AnalyzeRequest):
     _validate_weights(request.weights)
+    scenario = _canonical_scenario(request.scenario)
+    custom_rotation = [_canonical_crop(crop) for crop in request.custom_rotation]
+    if len(custom_rotation) != 3 or any(crop is None for crop in custom_rotation):
+        unknown = [original for original, canonical in zip(request.custom_rotation, custom_rotation) if canonical is None]
+        raise HTTPException(status_code=422, detail=f"Unknown crop(s) in custom_rotation: {unknown}")
     try:
         profile = get_climate_profile(request.lat, request.lon, request.years, request.use_gee)
     except Exception as error:
@@ -167,7 +201,7 @@ def analyze(request: AnalyzeRequest):
     mean_rain = float(np.mean(rain_values))
     cv = float(np.std(rain_values) / mean_rain) if mean_rain else 0
     slope = request.slope_deg if request.slope_deg is not None else (profile["gee"] or {}).get("slope_deg", 0)
-    wet = np.clip(select_wet_climate(profile, request.scenario, request.replay_year, request.rain_change_pct), 0, 1)
+    wet = np.clip(select_wet_climate(profile, scenario, request.replay_year, request.rain_change_pct), 0, 1)
     rotations = []
     for rotation_id, (name, crop_list) in ROTATIONS.items():
         score, parts = score_rotation(crop_list, wet, profile["heavy_clim"], slope, request.weights)
@@ -175,11 +209,9 @@ def analyze(request: AnalyzeRequest):
                           "total_score": score, "status_color": status(score), "status": status(score),
                           "explain_text": explain(parts), "explanation": explain(parts),
                           "breakdown": {key: round(value, 3) for key, value in parts.items()}})
-    if len(request.custom_rotation) != 3 or any(crop not in CROPS for crop in request.custom_rotation):
-        raise HTTPException(status_code=422, detail="custom_rotation must contain three known crops")
-    score, parts = score_rotation(request.custom_rotation, wet, profile["heavy_clim"], slope, request.weights)
+    score, parts = score_rotation(custom_rotation, wet, profile["heavy_clim"], slope, request.weights)
     rotations.append({"rotation_id": "custom", "id": "custom", "name": "Custom rotation",
-                          "crops": request.custom_rotation, "total_score": score,
+                          "crops": custom_rotation, "total_score": score,
                           "status_color": status(score), "status": status(score),
                           "explain_text": explain(parts), "explanation": explain(parts),
                           "breakdown": {key: round(value, 3) for key, value in parts.items()}})
@@ -191,7 +223,7 @@ def analyze(request: AnalyzeRequest):
     ndvi = _monthly_gee_values(profile["gee"], "ndvi_clim")
     exposed_months = _exposed_heavy_rain_months(profile["heavy_clim"], ndvi)
     bare_days = len(exposed_months) * 30
-    risk_calendar = _contract_risk_calendar(profile, profile["gee"], request.scenario, slope)
+    risk_calendar = _contract_risk_calendar(profile, profile["gee"], scenario, slope)
     return {
         "region_validated": 30 <= request.lat <= 38 and 7 <= request.lon <= 12,
         "kpis": {
@@ -261,7 +293,7 @@ def analyze(request: AnalyzeRequest):
                 profile["heavy_clim"], _monthly_gee_values(profile["gee"], "ndvi_clim")
             ),
         },
-        "sowing_window": {"primary_crop": request.custom_rotation[0],
+        "sowing_window": {"primary_crop": custom_rotation[0],
                           "optimal_start": doy_to_text(min(onset_values)) if onset_values else "",
                           "optimal_end": doy_to_text(max(onset_values)) if onset_values else "",
                           "soil_moisture_trigger_pct": 45,
