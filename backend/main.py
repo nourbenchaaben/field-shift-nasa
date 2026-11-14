@@ -60,10 +60,16 @@ def _risk_calendar(profile, gee):
         rows[label] = levels
     if ndvi:
         rows["bare_field"] = [
-            "red" if ndvi.get(str(month), 1) <= 0.25 else "yellow" if ndvi.get(str(month), 1) <= 0.35 else "green"
+            "none" if _ndvi(ndvi, month) is None else
+            "red" if _ndvi(ndvi, month) <= 0.25 else
+            "yellow" if _ndvi(ndvi, month) <= 0.35 else "green"
             for month in range(1, 13)
         ]
     return {"months": MONTHS, "rows": rows}
+
+
+def _ndvi(ndvi, month):
+    return ndvi.get(str(month), ndvi.get(month))
 
 
 def _monthly_gee_values(gee, key):
@@ -215,7 +221,7 @@ def analyze(request: AnalyzeRequest):
     rain_values = np.array(list(rain.values()), dtype=float)
     mean_rain = float(np.mean(rain_values))
     cv = float(np.std(rain_values) / mean_rain) if mean_rain else 0
-    slope = request.slope_deg if request.slope_deg is not None else (profile["gee"] or {}).get("slope_deg", 0)
+    slope = request.slope_deg if request.slope_deg is not None else (profile["gee"] or {}).get("slope_deg", 5)
     wet = np.clip(select_wet_climate(profile, scenario, request.replay_year, request.rain_change_pct), 0, 1)
     rotations = []
     for rotation_id, (name, crop_list) in ROTATIONS.items():
