@@ -803,7 +803,8 @@ export const RotationLabPage: React.FC = () => {
                       Crop: {contractResponse.sowing_window.primary_crop}
                     </span>
                     <span className="bg-white border border-[#D9D9D9] px-2 py-0.5 rounded">
-                      Trigger: ≥{contractResponse.sowing_window.soil_moisture_trigger_pct}% SMAP
+                      Trigger: ≥{contractResponse.sowing_window.soil_moisture_trigger_pct}%{' '}
+                      {contractResponse.confidence.gee_enabled ? 'SMAP' : 'POWER wetness'}
                     </span>
                   </div>
                 </div>

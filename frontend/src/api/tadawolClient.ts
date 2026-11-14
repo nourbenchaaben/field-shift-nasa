@@ -34,15 +34,16 @@ function normalizeBackendResponse(json: Record<string, any>, fallback: TadawolAp
     kpis: {
       ...fallback.kpis,
       ...backendKpis,
-      sustainability_score: backendKpis.avg_rain_mm ?? fallback.kpis.sustainability_score,
-      water_savings_pct: backendKpis.heavy_rain_days_yr ?? fallback.kpis.water_savings_pct,
-      erosion_reduction_pct: backendKpis.slope_deg ?? fallback.kpis.erosion_reduction_pct,
     },
     confidence: { ...fallback.confidence, ...(json.confidence ?? {}) },
     rotations: rotations.length > 0 ? rotations : fallback.rotations,
     bare_field_clock: { ...fallback.bare_field_clock, ...(json.bare_field_clock ?? {}) },
     sowing_window: { ...fallback.sowing_window, ...(json.sowing_window ?? {}) },
     risk_calendar: { ...fallback.risk_calendar, ...(json.risk_calendar ?? {}) },
+    monthly_telemetry: json.monthly_telemetry ?? fallback.monthly_telemetry,
+    agronomist_checklist: Array.isArray(json.agronomist_checklist)
+      ? json.agronomist_checklist
+      : fallback.agronomist_checklist,
     caveats: Array.isArray(json.caveats) ? json.caveats : fallback.caveats,
     meteomatics: json.meteomatics ?? fallback.meteomatics ?? null,
   };
@@ -239,10 +240,10 @@ export function simulateContractResponse(
     },
     confidence: {
       overall_score: geeEnabled ? 92 : 84,
-      level: req.use_gee ? 'High' : 'High',
+      level: 'High',
       data_source: geeEnabled
-        ? 'Google Earth Engine (Sentinel-2 + SMAP + CHIRPS) + Local Farm Profile'
-        : 'NASA SMAP L4 + MODIS LST + Local Farm Baseline',
+        ? 'NASA POWER + Google Earth Engine (SMAP + MODIS + SRTM)'
+        : 'NASA POWER',
       gee_enabled: geeEnabled,
       satellite_coverage_pct: geeEnabled ? 98 : 91,
       calibration_note: `Validated for ${req.lat.toFixed(2)}°N, ${req.lon.toFixed(2)}°E (${profile.soilType}, ${slope}° slope) across ${req.years}-year horizon.`,
@@ -301,8 +302,8 @@ export function simulateContractResponse(
     ],
     caveats: [
       geeEnabled
-        ? 'Google Earth Engine cloud-masked Sentinel-2 composites assume <15% cloud cover during peak tillering.'
-        : 'Running in fast local NASA baseline mode (use_gee=false); enable GEE for 10m sub-parcel optical indices.',
+        ? 'Earth Engine satellite values are combined with NASA POWER and require local validation.'
+        : 'Running on NASA POWER meteorological data; Earth Engine enrichment is unavailable.',
       `Climate simulation applies ${req.rain_change_pct >= 0 ? '+' : ''}${req.rain_change_pct}% rainfall shift under "${req.scenario}" scenario over ${req.years} years.`,
       slope >= 6
         ? `Terrain slope (${slope}°) warrants contour seeding and zero bare-fallow windows during October–November.`

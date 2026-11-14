@@ -271,7 +271,7 @@ def analyze(request: AnalyzeRequest):
             "slope_deg": round(float(slope), 1),
         },
         "confidence": {
-            "overall_score": 70 if request.use_gee else 55,
+            "overall_score": 70 if profile["gee"] else 55,
             "level": "Moderate" if len(rain) >= 5 else "Low",
             "data_source": "NASA POWER" + (" + Google Earth Engine" if profile["gee"] else ""),
             "gee_enabled": profile["gee"] is not None,

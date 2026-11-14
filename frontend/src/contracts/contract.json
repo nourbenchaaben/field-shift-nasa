@@ -32,6 +32,14 @@
       "satellite_coverage_pct": 60,
       "calibration_note": "Crop values are generic and require local agronomist validation."
     },
+    "monthly_telemetry": {
+      "months": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
+      "monthly_rain_mm": [],
+      "monthly_soil_moisture": [],
+      "monthly_ndvi": [],
+      "monthly_temp_c": [],
+      "monthly_temp_min_c": []
+    },
     "rotations": [],
     "bare_field_clock": {},
     "sowing_window": {},

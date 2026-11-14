@@ -16,7 +16,7 @@ export interface TadawolApiRequest {
   lat: number;
   lon: number;
   years: number;
-  use_gee?: boolean;
+  use_gee: boolean;
   use_meteomatics?: boolean;
   slope_deg: number | null;
   weights: OptimizationWeights;
@@ -112,6 +112,14 @@ export interface TadawolApiResponse {
   risk_calendar: ContractRiskCalendar;
   agronomist_checklist: ContractChecklistItem[];
   caveats: string[];
+  monthly_telemetry?: {
+    months: string[];
+    monthly_rain_mm: Array<number | null>;
+    monthly_soil_moisture: Array<number | null>;
+    monthly_ndvi: Array<number | null>;
+    monthly_temp_c: Array<number | null>;
+    monthly_temp_min_c: Array<number | null>;
+  };
   meteomatics?: {
     available: boolean;
     source: 'Meteomatics';
