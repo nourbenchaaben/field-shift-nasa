@@ -29,9 +29,31 @@ def score_rotation(crops, wet_clim, heavy_clim, slope_deg: float, weights: Mappi
         risks.append(mismatch * (0.5 + 0.5 * item["water"] / 3))
     water = 1 - float(np.mean(risks))
     income = float(np.mean([(item["market"] + item["forage"]) / 6 for item in items]))
-    parts = {"soil": soil, "erosion": erosion, "water": water, "income": income}
+    parts = {
+        "soil": float(np.clip(soil, 0, 1)),
+        "erosion": float(np.clip(erosion, 0, 1)),
+        "water": float(np.clip(water, 0, 1)),
+        "income": float(np.clip(income, 0, 1)),
+    }
     total = sum(weights.get(key, 0) * value for key, value in parts.items()) / max(sum(weights.values()), 1e-9)
     return round(10 * total, 1), parts
+
+
+def rotation_indicators(crops, parts, baseline_yield_t_ha: float = 3.0):
+    items = [CROPS[crop] for crop in crops]
+    average_yield = float(np.mean([item["base_yield_t_ha"] for item in items]))
+    water_use = float(np.mean([item["water_use_mm"] for item in items]))
+    nitrogen = float(np.mean([item["n_fix"] for item in items]) * 80)
+    yield_gain = float(np.clip((average_yield / baseline_yield_t_ha - 1) * 100 + parts["soil"] * 8, -20, 40))
+    som_gain = float(np.clip(parts["soil"] * 4.5, 0, 5))
+    return {
+        "avg_yield_t_ha": round(average_yield, 2),
+        "water_use_mm": round(water_use, 1),
+        "nitrogen_balance_kg_ha": round(nitrogen, 1),
+        "expected_yield_gain_pct": round(yield_gain, 1),
+        "som_gain_pct": round(som_gain, 2),
+        "water_savings_pct": round((1 - water_use / 500) * 100, 1),
+    }
 
 
 def explain(parts) -> str:

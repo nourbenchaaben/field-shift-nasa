@@ -34,6 +34,7 @@ import {
   executeOptimizationContract,
   simulateContractResponse,
 } from '../api/tadawolClient';
+import { askAdvisor } from '../api/advisorClient';
 
 export interface ContractSettings {
   years: number;
@@ -88,7 +89,7 @@ interface FarmContextValue {
   isChatOpen: boolean;
   setIsChatOpen: (open: boolean) => void;
   chatMessages: ChatMessage[];
-  sendChatMessage: (text: string) => void;
+  sendChatMessage: (text: string) => Promise<void>;
   // Global Data Sources Directory Modal
   isDataSourcesOpen: boolean;
   setIsDataSourcesOpen: (open: boolean) => void;
@@ -121,6 +122,23 @@ interface FarmContextValue {
 
 const ACCOUNTS_KEY = 'tadawol_global_accounts_v3';
 const SESSION_KEY = 'tadawol_global_session_v3';
+
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+const NAME_PATTERN = /^[\p{L}][\p{L}\s.'-]{1,79}$/u;
+const FARM_NAME_PATTERN = /^[\p{L}\p{N}][\p{L}\p{N}\s.'&()_-]{1,99}$/u;
+
+function validateCredentials(email: string, password: string): string | null {
+  if (!EMAIL_PATTERN.test(email.trim().toLowerCase())) {
+    return 'Please enter a valid email address.';
+  }
+  if (password.length < 8) {
+    return 'Password must contain at least 8 characters.';
+  }
+  if (!/[A-Z]/.test(password) || !/[a-z]/.test(password) || !/\d/.test(password)) {
+    return 'Password must include an uppercase letter, a lowercase letter, and a number.';
+  }
+  return null;
+}
 
 const DEFAULT_CONTRACT_SETTINGS: ContractSettings = {
   years: DEFAULT_CONTRACT_REQUEST.years,
@@ -640,6 +658,12 @@ export const FarmProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const loginWithCredentials = (email: string, password: string) => {
     const cleanEmail = email.trim().toLowerCase();
+    if (!EMAIL_PATTERN.test(cleanEmail)) {
+      return { ok: false, error: 'Please enter a valid email address.' };
+    }
+    if (!password) {
+      return { ok: false, error: 'Please enter your password.' };
+    }
     const found = accounts.find((a) => a.email.toLowerCase() === cleanEmail);
     if (!found) {
       return {
@@ -671,6 +695,24 @@ export const FarmProvider: React.FC<{ children: React.ReactNode }> = ({ children
     newFarmProfile: Omit<FarmerProfile, 'nasaPower'>,
     password: string
   ) => {
+    const name = newFarmProfile.name.trim();
+    const email = newFarmProfile.email.trim().toLowerCase();
+    const farmName = newFarmProfile.farmName.trim();
+    const credentialError = validateCredentials(email, password);
+    if (credentialError) throw new Error(credentialError);
+    if (!NAME_PATTERN.test(name)) {
+      throw new Error('Full name must contain 2–80 letters and may include spaces, apostrophes, or hyphens.');
+    }
+    if (!FARM_NAME_PATTERN.test(farmName)) {
+      throw new Error('Farm name must contain 2–100 letters or numbers.');
+    }
+    if (newFarmProfile.areaHectares < 5 || newFarmProfile.areaHectares > 200) {
+      throw new Error('Farm area must be between 5 and 200 hectares.');
+    }
+    if (accounts.some((a) => a.email.toLowerCase() === email)) {
+      throw new Error('An account with this email already exists. Please sign in instead.');
+    }
+
     setIsFetchingNasa(true);
     const liveNasa = await fetchLiveNasaPower(
       newFarmProfile.coordinates,
@@ -681,13 +723,16 @@ export const FarmProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const fullProfile: FarmerProfile = {
       ...newFarmProfile,
+      name,
+      email,
+      farmName,
       nasaPower: liveNasa,
     };
     const firstFarm = profileToFarmRecord(fullProfile, `farm-${Date.now().toString(36)}`);
 
     const newAccount: StoredAccount = {
       email: fullProfile.email,
-      password: password || 'tadawol123',
+      password,
       name: fullProfile.name,
       photoDataUrl: fullProfile.photoDataUrl,
       farms: [firstFarm],
@@ -696,10 +741,7 @@ export const FarmProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
 
     setAccounts((prev) => {
-      const withoutDup = prev.filter(
-        (a) => a.email.toLowerCase() !== fullProfile.email.toLowerCase()
-      );
-      const next = [newAccount, ...withoutDup];
+      const next = [newAccount, ...prev];
       saveAccounts(next);
       return next;
     });
@@ -784,7 +826,7 @@ export const FarmProvider: React.FC<{ children: React.ReactNode }> = ({ children
     showToast(`Added "${created.title}" to "${activeFarm.farmName}" Calendar.`);
   };
 
-  const sendChatMessage = (text: string) => {
+  const sendChatMessage = async (text: string) => {
     const trimmed = text.trim();
     if (!trimmed) return;
     const ts = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -796,22 +838,41 @@ export const FarmProvider: React.FC<{ children: React.ReactNode }> = ({ children
       timestamp: ts,
     };
 
-    const replyText = generateGlobalAgronomyReply(
-      trimmed,
-      profile,
-      activeStrategy,
-      top3Strategies,
-      screen
-    );
-
-    const aiMsg: ChatMessage = {
-      id: `a-${Date.now() + 1}`,
-      role: 'assistant',
-      content: replyText,
-      timestamp: ts,
-    };
-
-    setChatMessages((prev) => [...prev, userMsg, aiMsg]);
+    const history = chatMessages
+      .filter((message) => message.role === 'user' || message.role === 'assistant')
+      .slice(-8)
+      .map((message) => ({ role: message.role, content: message.content }));
+    setChatMessages((prev) => [...prev, userMsg]);
+    try {
+      const result = await askAdvisor(trimmed, profile, activeStrategy, history);
+      setChatMessages((prev) => [
+        ...prev,
+        {
+          id: `a-${Date.now() + 1}`,
+          role: 'assistant',
+          content: result.answer,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        },
+      ]);
+    } catch (error) {
+      const replyText = generateGlobalAgronomyReply(
+        trimmed,
+        profile,
+        activeStrategy,
+        top3Strategies,
+        screen
+      );
+      setChatMessages((prev) => [
+        ...prev,
+        {
+          id: `a-${Date.now() + 1}`,
+          role: 'assistant',
+          content: `${replyText}\n\n_(Backend advisor unavailable; showing local guidance.)_`,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        },
+      ]);
+      showToast(error instanceof Error ? error.message : 'Advisor API unavailable.');
+    }
   };
 
   const updateContractSettings = (updates: Partial<ContractSettings>) => {

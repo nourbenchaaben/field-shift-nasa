@@ -69,6 +69,7 @@ export const AuthOnboardingPage: React.FC = () => {
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [farmName, setFarmName] = useState('');
   const [photoDataUrl, setPhotoDataUrl] = useState<string | undefined>(undefined);
   const fileRef = useRef<HTMLInputElement | null>(null);
@@ -95,6 +96,7 @@ export const AuthOnboardingPage: React.FC = () => {
   const [lastSeason1, setLastSeason1] = useState('Wheat');
   const [lastSeason2, setLastSeason2] = useState('Maize (Corn)');
   const [submitting, setSubmitting] = useState(false);
+  const [registrationError, setRegistrationError] = useState<string | null>(null);
 
   const areaHa = useMemo(() => computePolygonAreaHectares(boundary), [boundary]);
 
@@ -135,6 +137,12 @@ export const AuthOnboardingPage: React.FC = () => {
   const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
     if (!f) return;
+    if (!f.type.startsWith('image/') || f.size > 5 * 1024 * 1024) {
+      setRegistrationError('Photo must be an image smaller than 5 MB.');
+      e.target.value = '';
+      return;
+    }
+    setRegistrationError(null);
     const reader = new FileReader();
     reader.onload = () => {
       if (typeof reader.result === 'string') setPhotoDataUrl(reader.result);
@@ -157,33 +165,42 @@ export const AuthOnboardingPage: React.FC = () => {
 
   const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setRegistrationError(null);
     setSubmitting(true);
-    const coordObj = { lat: coords[0], lng: coords[1] };
-    const resolvedSlopeDeg = resolveSlopeDegrees(slopeOption, coordObj);
-    await registerAccount(
-      {
-        name: fullName.trim() || 'Global Farmer',
-        email: email.trim() || `farmer.${Date.now()}@tadawol.org`,
-        photoDataUrl,
-        farmName: farmName.trim() || `${selectedCountry.name} Heritage Farm`,
-        countryCode: selectedCountry.code,
-        countryName: selectedCountry.name,
-        countryFlag: selectedCountry.flag,
-        climateZone: selectedCountry.climateZone,
-        regionLabel: `${selectedCountry.regionHint}, ${selectedCountry.name}`,
-        coordinates: coordObj,
-        areaHectares: areaHa,
-        boundary,
-        soilType,
-        slopeOption,
-        slopeDeg: resolvedSlopeDeg,
-        irrigationType,
-        equipment: equipment.length > 0 ? equipment : ['Tractor & Disc Harrow'],
-        previousCrops: [lastSeason1, lastSeason2],
-      },
-      password || 'tadawol123'
-    );
-    setSubmitting(false);
+    try {
+      if (password !== confirmPassword) {
+        throw new Error('Passwords do not match.');
+      }
+      const coordObj = { lat: coords[0], lng: coords[1] };
+      const resolvedSlopeDeg = resolveSlopeDegrees(slopeOption, coordObj);
+      await registerAccount(
+        {
+          name: fullName.trim(),
+          email: email.trim(),
+          photoDataUrl,
+          farmName: farmName.trim(),
+          countryCode: selectedCountry.code,
+          countryName: selectedCountry.name,
+          countryFlag: selectedCountry.flag,
+          climateZone: selectedCountry.climateZone,
+          regionLabel: `${selectedCountry.regionHint}, ${selectedCountry.name}`,
+          coordinates: coordObj,
+          areaHectares: areaHa,
+          boundary,
+          soilType,
+          slopeOption,
+          slopeDeg: resolvedSlopeDeg,
+          irrigationType,
+          equipment: equipment.length > 0 ? equipment : ['Tractor & Disc Harrow'],
+          previousCrops: [lastSeason1, lastSeason2],
+        },
+        password
+      );
+    } catch (error) {
+      setRegistrationError(error instanceof Error ? error.message : 'Registration failed.');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -259,6 +276,7 @@ export const AuthOnboardingPage: React.FC = () => {
                     value={loginEmail}
                     onChange={(e) => setLoginEmail(e.target.value)}
                     placeholder="you@farm.org"
+                    autoComplete="email"
                     className="w-full pl-10 pr-3 py-2.5 bg-[#F5F4F0] border border-[#D1D1D1] rounded-xl text-sm focus:outline-none focus:bg-white focus:border-[#00873A]"
                   />
                 </div>
@@ -274,6 +292,7 @@ export const AuthOnboardingPage: React.FC = () => {
                     value={loginPassword}
                     onChange={(e) => setLoginPassword(e.target.value)}
                     placeholder="Enter password"
+                    autoComplete="current-password"
                     className="w-full pl-10 pr-3 py-2.5 bg-[#F5F4F0] border border-[#D1D1D1] rounded-xl text-sm focus:outline-none focus:bg-white focus:border-[#00873A]"
                   />
                 </div>
@@ -424,6 +443,13 @@ export const AuthOnboardingPage: React.FC = () => {
               </p>
             </div>
 
+            {registrationError && (
+              <div className="p-3 rounded-xl bg-[#FCEBE6] border border-[#E7A18E] text-xs text-[#8C2B11] flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>{registrationError}</span>
+              </div>
+            )}
+
             {/* Optional Profile Photo Upload */}
             <div className="flex items-center gap-4 p-3.5 rounded-xl bg-[#F5F4F0] border border-[#E2E0D8]">
               <div className="relative shrink-0">
@@ -475,6 +501,9 @@ export const AuthOnboardingPage: React.FC = () => {
                   value={fullName}
                   onChange={(e) => setFullName(e.target.value)}
                   placeholder="e.g. Carlos Mendez"
+                  minLength={2}
+                  maxLength={80}
+                  autoComplete="name"
                   className="w-full px-3.5 py-2.5 bg-[#F5F4F0] border border-[#D1D1D1] rounded-xl text-sm focus:outline-none focus:bg-white focus:border-[#00873A]"
                 />
               </div>
@@ -486,6 +515,8 @@ export const AuthOnboardingPage: React.FC = () => {
                   value={farmName}
                   onChange={(e) => setFarmName(e.target.value)}
                   placeholder="e.g. Valley Green Farm"
+                  minLength={2}
+                  maxLength={100}
                   className="w-full px-3.5 py-2.5 bg-[#F5F4F0] border border-[#D1D1D1] rounded-xl text-sm focus:outline-none focus:bg-white focus:border-[#00873A]"
                 />
               </div>
@@ -497,6 +528,7 @@ export const AuthOnboardingPage: React.FC = () => {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="farmer@example.com"
+                  autoComplete="email"
                   className="w-full px-3.5 py-2.5 bg-[#F5F4F0] border border-[#D1D1D1] rounded-xl text-sm focus:outline-none focus:bg-white focus:border-[#00873A]"
                 />
               </div>
@@ -505,10 +537,28 @@ export const AuthOnboardingPage: React.FC = () => {
                 <input
                   type="password"
                   required
-                  minLength={4}
+                  minLength={8}
+                  maxLength={128}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Min 4 characters"
+                  placeholder="8+ chars, upper/lowercase and number"
+                  autoComplete="new-password"
+                  className="w-full px-3.5 py-2.5 bg-[#F5F4F0] border border-[#D1D1D1] rounded-xl text-sm focus:outline-none focus:bg-white focus:border-[#00873A]"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-[#111111] mb-1">
+                  Confirm Password *
+                </label>
+                <input
+                  type="password"
+                  required
+                  minLength={8}
+                  maxLength={128}
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  placeholder="Repeat your password"
+                  autoComplete="new-password"
                   className="w-full px-3.5 py-2.5 bg-[#F5F4F0] border border-[#D1D1D1] rounded-xl text-sm focus:outline-none focus:bg-white focus:border-[#00873A]"
                 />
               </div>

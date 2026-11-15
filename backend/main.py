@@ -1,28 +1,37 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 import numpy as np
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from .data.climate import get_climate_profile
+from .data.database import initialize_database, list_crops
 from .data.meteomatics_client import build_profile as build_meteomatics_profile
+from .advisor import MAX_HISTORY_ITEMS, MAX_MESSAGE_LENGTH, answer as advisor_answer
 from .data.power_client import MONTHS, doy_to_text
 from .engine.crops import CROPS, ROTATIONS
 from .engine.scenarios import select_wet_climate
-from .engine.scoring import explain, score_rotation, status
+from .engine.scoring import explain, rotation_indicators, score_rotation, status
 
 app = FastAPI(title="Rotation Compass API", version="1.0.0")
 logger = logging.getLogger(__name__)
+_advisor_rate_limits: dict[str, list[float]] = {}
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+def startup() -> None:
+    initialize_database()
 
 
 class AnalyzeRequest(BaseModel):
@@ -38,7 +47,22 @@ class AnalyzeRequest(BaseModel):
     scenario: str = "normal"
     replay_year: int | None = None
     rain_change_pct: int = Field(0, ge=-40, le=20)
-    custom_rotation: list[str] = ["Durum wheat", "Fava bean", "Barley + vetch"]
+    custom_rotation: list[str] = Field(
+        default=["Durum wheat", "Fava bean", "Barley + vetch"],
+        min_length=3,
+        max_length=3,
+    )
+
+
+class AdvisorMessage(BaseModel):
+    role: str
+    content: str = Field(min_length=1, max_length=MAX_MESSAGE_LENGTH)
+
+
+class AdvisorRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=MAX_MESSAGE_LENGTH)
+    farm_context: dict[str, Any] = Field(default_factory=dict)
+    conversation: list[AdvisorMessage] = Field(default_factory=list, max_length=MAX_HISTORY_ITEMS)
 
 
 def _risk_calendar(profile, gee):
@@ -151,7 +175,29 @@ def health():
 
 @app.get("/api/crops")
 def crops():
-    return CROPS
+    return list_crops()
+
+
+@app.post("/api/advisor/chat")
+def advisor_chat(payload: AdvisorRequest, request: Request):
+    client_key = request.client.host if request.client else "unknown"
+    now = time.monotonic()
+    recent = [stamp for stamp in _advisor_rate_limits.get(client_key, []) if now - stamp < 60]
+    if len(recent) >= 30:
+        raise HTTPException(status_code=429, detail="Advisor rate limit exceeded; try again shortly")
+    recent.append(now)
+    _advisor_rate_limits[client_key] = recent
+    context = payload.farm_context
+    if len(context) > 40:
+        raise HTTPException(status_code=422, detail="farm_context contains too many fields")
+    history = [item.model_dump() for item in payload.conversation]
+    invalid_roles = [item["role"] for item in history if item["role"] not in {"user", "assistant"}]
+    if invalid_roles:
+        raise HTTPException(status_code=422, detail="conversation roles must be user or assistant")
+    try:
+        return advisor_answer(payload.message, context, history)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
 
 
 def _validate_weights(weights: dict[str, float]) -> None:
@@ -231,20 +277,21 @@ def analyze(request: AnalyzeRequest):
     cv = float(np.std(rain_values) / mean_rain) if mean_rain else 0
     slope = request.slope_deg if request.slope_deg is not None else (profile["gee"] or {}).get("slope_deg", 5)
     wet = np.clip(select_wet_climate(profile, scenario, request.replay_year, request.rain_change_pct), 0, 1)
+    candidates = list(ROTATIONS.items())
+    custom_key = ("custom", ("Custom rotation", custom_rotation))
+    if custom_rotation not in [crop_list for _, (_, crop_list) in ROTATIONS.items()]:
+        candidates.append(custom_key)
     rotations = []
-    for rotation_id, (name, crop_list) in ROTATIONS.items():
+    for rotation_id, (name, crop_list) in candidates:
         score, parts = score_rotation(crop_list, wet, profile["heavy_clim"], slope, request.weights)
+        indicators = rotation_indicators(crop_list, parts)
         rotations.append({"rotation_id": rotation_id, "id": rotation_id, "name": name, "crops": crop_list,
                           "total_score": score, "status_color": status(score), "status": status(score),
                           "explain_text": explain(parts), "explanation": explain(parts),
-                          "breakdown": {key: round(value, 3) for key, value in parts.items()}})
-    score, parts = score_rotation(custom_rotation, wet, profile["heavy_clim"], slope, request.weights)
-    rotations.append({"rotation_id": "custom", "id": "custom", "name": "Custom rotation",
-                          "crops": custom_rotation, "total_score": score,
-                          "status_color": status(score), "status": status(score),
-                          "explain_text": explain(parts), "explanation": explain(parts),
+                          "indicators": indicators,
                           "breakdown": {key: round(value, 3) for key, value in parts.items()}})
     rotations.sort(key=lambda item: item["total_score"], reverse=True)
+    rotations = rotations[:3]
     onset = profile["autumn_onset"]
     onset_values = list(onset.values())
     best = rotations[0]
@@ -260,9 +307,9 @@ def analyze(request: AnalyzeRequest):
             "water_savings_pct": round(best_parts["water"] * 100),
             "erosion_reduction_pct": round(best_parts["erosion"] * 100),
             "yield_stability_pct": round(best_parts["water"] * 100),
-            "expected_yield_gain_pct": 0,
-            "som_gain_pct": 0,
-            "nitrogen_balance_kg_ha": 0,
+            "expected_yield_gain_pct": best["indicators"]["expected_yield_gain_pct"],
+            "som_gain_pct": best["indicators"]["som_gain_pct"],
+            "nitrogen_balance_kg_ha": best["indicators"]["nitrogen_balance_kg_ha"],
             "sustainability_score": round(best["total_score"] * 10),
             "avg_rain_mm": round(mean_rain),
             "driest_year": int(min(rain, key=rain.get)),
@@ -291,13 +338,14 @@ def analyze(request: AnalyzeRequest):
                 "water_score": round(item["breakdown"]["water"] * 100),
                 "erosion_score": round(item["breakdown"]["erosion"] * 100),
                 "income_score": round(item["breakdown"]["income"] * 100),
-                "avg_yield_t_ha": 0,
-                "water_use_mm": 0,
+                "avg_yield_t_ha": item["indicators"]["avg_yield_t_ha"],
+                "water_use_mm": item["indicators"]["water_use_mm"],
                 "rationale": item["explain_text"],
                 "rotation_id": item["rotation_id"],
                 "total_score": item["total_score"],
                 "status_color": item["status_color"],
                 "breakdown": item["breakdown"],
+                "indicators": item["indicators"],
             }
             for index, item in enumerate(rotations)
         ],
