@@ -15,7 +15,6 @@ import {
   buildFarmCalendarEvents,
   DEFAULT_GLOBAL_PROFILE,
   evaluateTop3Strategies,
-  generateGlobalAgronomyReply,
 } from '../data/decisionEngine';
 import {
   buildFallbackNasaPower,
@@ -855,19 +854,12 @@ export const FarmProvider: React.FC<{ children: React.ReactNode }> = ({ children
         },
       ]);
     } catch (error) {
-      const replyText = generateGlobalAgronomyReply(
-        trimmed,
-        profile,
-        activeStrategy,
-        top3Strategies,
-        screen
-      );
       setChatMessages((prev) => [
         ...prev,
         {
           id: `a-${Date.now() + 1}`,
           role: 'assistant',
-          content: `${replyText}\n\n_(Backend advisor unavailable; showing local guidance.)_`,
+          content: 'The Groq advisor is unavailable. Please try again later.',
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         },
       ]);

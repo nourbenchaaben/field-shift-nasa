@@ -198,6 +198,8 @@ def advisor_chat(payload: AdvisorRequest, request: Request):
         return advisor_answer(payload.message, context, history)
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
+    except RuntimeError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
 
 
 def _validate_weights(weights: dict[str, float]) -> None:

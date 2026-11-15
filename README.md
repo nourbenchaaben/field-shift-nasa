@@ -55,20 +55,19 @@ Earth Engine is unavailable. The response reports the actual source and
 supplies the automatic slope; a numeric `slope_deg` remains a manual override.
 SMAP supplies water wetness and MODIS supplies NDVI/bare-field risk.
 
-The backend also exposes `POST /api/advisor/chat`. It first uses GitHub Models
-when `GITHUB_TOKEN` is configured, then Azure OpenAI when
-`AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, and
-`AZURE_OPENAI_DEPLOYMENT` are configured, then OpenAI when `OPENAI_API_KEY` is
-configured. If no provider is available, the endpoint returns a
-deterministic NASA-aware fallback; the response identifies the provider and
-fallback status. Secrets must remain in backend environment variables and must
-never be placed in the React application.
+The backend also exposes `POST /api/advisor/chat` using Groq through its
+OpenAI-compatible API. If Groq is unavailable or `OPENAI_API_KEY` is missing,
+the endpoint returns HTTP 503 rather than using another AI provider or a
+simulated AI response.
+Secrets must remain in backend environment variables and must never be placed
+in the React application.
 
 ```powershell
-$env:GITHUB_TOKEN = "github_pat_your_token"
-$env:GITHUB_MODELS_MODEL = "openai/gpt-4o-mini"
-
-
+Remove-Item Env:GITHUB_TOKEN -ErrorAction SilentlyContinue
+$env:OPENAI_API_KEY = "gsk_your_groq_key_here"
+$env:OPENAI_BASE_URL = "https://api.groq.com/openai/v1"
+$env:OPENAI_MODEL = "llama-3.3-70b-versatile"
+```
 
 The advisor receives only a bounded farm context, the computed active rotation,
 and selected NASA indicators. It explains backend results but does not replace
