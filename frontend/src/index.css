@@ -246,3 +246,624 @@
 ::-webkit-scrollbar-thumb:hover {
   background: #979797;
 }
+
+/* Masked password input that suppresses native browser password-manager popups */
+.password-masked {
+  -webkit-text-security: disc;
+  text-security: disc;
+}
+
+@keyframes currentMonthPulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(235, 180, 14, 0.72), 0 0 0 2px rgba(17, 17, 17, 0.85);
+    transform: scale(1);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(235, 180, 14, 0), 0 0 0 2px rgba(17, 17, 17, 0.95);
+    transform: scale(1.03);
+  }
+}
+
+.risk-current-pulse {
+  animation: currentMonthPulse 2s ease-in-out infinite;
+  position: relative;
+  z-index: 2;
+}
+
+/* Lively 60fps SVG animations for Dashboard Today beacon & animated curves */
+@keyframes todayRadarWave {
+  0% {
+    transform: scale(0.75);
+    opacity: 0.85;
+  }
+  70% {
+    transform: scale(2.85);
+    opacity: 0.12;
+  }
+  100% {
+    transform: scale(3.2);
+    opacity: 0;
+  }
+}
+
+@keyframes todayCoreBreath {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.24);
+  }
+}
+
+@keyframes todayBarPulse {
+  0%,
+  100% {
+    filter: drop-shadow(0 0 0px rgba(0, 135, 58, 0.25));
+    opacity: 0.92;
+  }
+  50% {
+    filter: drop-shadow(0 0 8px rgba(0, 135, 58, 0.72));
+    opacity: 1;
+  }
+}
+
+@keyframes todayBadgeFloat {
+  0%,
+  100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-2.5px);
+  }
+}
+
+@keyframes flowDashLine {
+  to {
+    stroke-dashoffset: -28;
+  }
+}
+
+.chart-today-ring-1 {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: todayRadarWave 1.9s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+}
+
+.chart-today-ring-2 {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: todayRadarWave 1.9s cubic-bezier(0.22, 1, 0.36, 1) 0.95s infinite;
+}
+
+.chart-today-core {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: todayCoreBreath 1.9s ease-in-out infinite;
+}
+
+.chart-today-badge {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: todayBadgeFloat 1.9s ease-in-out infinite;
+}
+
+.chart-today-bar {
+  animation: todayBarPulse 2s ease-in-out infinite;
+}
+
+.chart-flow-dash {
+  animation: flowDashLine 1.6s linear infinite;
+}
+
+/* Pulsating active stage tile & flowing arrows for the Crop Rotation Roadmap */
+@keyframes roadmapStagePulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(0, 135, 58, 0.55), 0 0 0 3px rgba(235, 180, 14, 0.95),
+      0 10px 24px rgba(0, 135, 58, 0.22);
+    transform: translateY(0px) scale(1);
+  }
+  50% {
+    box-shadow: 0 0 0 11px rgba(0, 135, 58, 0), 0 0 0 3.5px rgba(235, 180, 14, 1),
+      0 14px 28px rgba(0, 135, 58, 0.34);
+    transform: translateY(-2px) scale(1.028);
+  }
+}
+
+@keyframes roadmapArrowFlow {
+  to {
+    stroke-dashoffset: -24;
+  }
+}
+
+.roadmap-stage-pulse {
+  animation: roadmapStagePulse 1.9s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+}
+
+.roadmap-arrow-flow {
+  animation: roadmapArrowFlow 1.2s linear infinite;
+}
+
+/* Vivid pulsating Today cell on the 12-Month Annual Farm Calendar */
+@keyframes todayCalendarPulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(235, 180, 14, 0.92), 0 0 0 2.5px rgba(235, 180, 14, 1);
+    transform: scale(1);
+  }
+  50% {
+    box-shadow: 0 0 0 9px rgba(235, 180, 14, 0), 0 0 0 3px rgba(0, 135, 58, 0.95);
+    transform: scale(1.16);
+  }
+}
+
+.today-calendar-pulse {
+  animation: todayCalendarPulse 1.55s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+}
+
+/* ============================================================================
+   GLOBAL DARK MODE THEME (Obsidian-Forest AgriTech Palette)
+   Activated via html.dark (controlled by ThemeContext + persisted in localStorage)
+   ============================================================================ */
+html,
+body {
+  transition: background-color 0.25s var(--ease-main), color 0.2s var(--ease-main);
+}
+
+html.dark {
+  color-scheme: dark;
+  --color-white: #0c100e;
+  --color-paper: #141a17;
+  --color-warm-stone: #0c100e;
+  --color-warm-muted: #1b231f;
+  --color-border: #2b3731;
+  --color-border-strong: #36453d;
+  --color-ink: #f3f5f2;
+  --color-slate-700: #d0d7d2;
+  --color-slate-600: #a5b0aa;
+  --color-slate-500: #87948d;
+}
+
+html.dark body {
+  background-color: #0c100e;
+  color: #f3f5f2;
+}
+
+/* Custom Dark Scrollbar */
+html.dark ::-webkit-scrollbar-track {
+  background: #0f1412;
+}
+html.dark ::-webkit-scrollbar-thumb {
+  background: #2f3d36;
+}
+html.dark ::-webkit-scrollbar-thumb:hover {
+  background: #44584e;
+}
+
+/* Core editorial components in Dark Mode */
+html.dark .surface-card {
+  background-color: #141a17 !important;
+  border-color: #29352f !important;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.36);
+}
+
+html.dark .btn-outline-ink,
+html.dark .btn-pill-outline {
+  color: #f3f5f2;
+  border-color: #4b5d54;
+}
+html.dark .btn-outline-ink:hover,
+html.dark .btn-pill-outline:hover {
+  background-color: #f3f5f2;
+  border-color: #f3f5f2;
+  color: #0c100e;
+}
+
+html.dark .btn-harvest,
+html.dark .btn-pill-primary {
+  color: #111111 !important;
+  background-color: #ebb40e;
+  border-color: #ebb40e;
+}
+html.dark .btn-harvest:hover,
+html.dark .btn-pill-primary:hover {
+  background-color: #f7c93b;
+  border-color: #f7c93b;
+  color: #111111 !important;
+}
+
+html.dark .btn-forest,
+html.dark .btn-pill-green {
+  color: #ffffff !important;
+  background-color: #00873a;
+  border-color: #00873a;
+}
+html.dark .btn-forest:hover,
+html.dark .btn-pill-green:hover {
+  background-color: #00a347;
+  border-color: #00a347;
+  color: #ffffff !important;
+}
+
+html.dark .btn-circle {
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+/* Subtle Survey & Orbital Backgrounds in Dark Mode */
+html.dark .bg-survey-pattern {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='73' height='87' fill='none' viewBox='0 0 73 87'%3E%3Ccircle cx='44' cy='51' r='6.5' stroke='%23FFFFFF' stroke-opacity='0.06' stroke-width='2.5'/%3E%3Cpath fill='%23FFFFFF' fill-opacity='0.06' d='M42.5 2h3v13h-3zM37.5 7h13v3h-13z'/%3E%3Ccircle cx='8' cy='8' r='5.5' stroke='%23FFFFFF' stroke-opacity='0.05' stroke-width='2.5'/%3E%3Cpath fill='%23FFFFFF' fill-opacity='0.05' d='M6.5 46h3v13h-3zM1.5 51h13v3h-13z'/%3E%3C/svg%3E");
+}
+
+html.dark .bg-orbital-rings {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1600' height='777' fill='none' viewBox='0 0 1600 777'%3E%3Ccircle cx='180' cy='-160' r='440' stroke='%23FFFFFF' stroke-opacity='0.06' stroke-width='24'/%3E%3Ccircle cx='1520' cy='380' r='440' stroke='%23FFFFFF' stroke-opacity='0.06' stroke-width='24'/%3E%3C/svg%3E");
+}
+
+/* Tier 0 & Tier 1 Neutral Paper & Stone Surfaces -> Deep Obsidian / Charcoal */
+html.dark .bg-\[\#FFFEFB\],
+html.dark .bg-\[\#FFFEFB\]\/95,
+html.dark .bg-\[\#FFFEFB\]\/96,
+html.dark .bg-white,
+html.dark .bg-white\/92,
+html.dark .bg-white\/95 {
+  background-color: #141a17 !important;
+}
+
+html.dark .bg-\[\#F5F4F0\],
+html.dark .bg-\[\#F5F4F0\]\/50,
+html.dark .bg-\[\#F5F4F0\]\/90,
+html.dark .bg-\[\#F3F2EE\],
+html.dark .bg-\[\#F7F6F2\],
+html.dark .bg-\[\#F8F7F2\],
+html.dark .bg-\[\#F8F7F3\],
+html.dark .bg-\[\#F8F7F4\],
+html.dark .bg-\[\#FAF9F6\],
+html.dark .bg-\[\#EFECE4\],
+html.dark .bg-\[\#F2F0E8\],
+html.dark .bg-\[\#EAE7DE\],
+html.dark .bg-\[\#E8E6DE\],
+html.dark .bg-\[\#E5E3DB\] {
+  background-color: #1b231f !important;
+}
+
+/* Keep AppShell Outer Canvas deepest obsidian */
+html.dark .min-h-screen.bg-\[\#F5F4F0\] {
+  background-color: #0c100e !important;
+}
+
+/* Diorama Frame Shell in Dark Mode */
+html.dark .bg-\[\#EEE5AB\] {
+  background-color: #12191e !important;
+}
+
+/* Elevated dark active buttons/badges that used #111111 in light mode */
+html.dark .bg-\[\#111111\],
+html.dark .bg-\[\#111111\]\/90,
+html.dark .bg-\[\#111111\]\/88 {
+  background-color: #24302a !important;
+}
+
+/* Semantic Tinted Surfaces -> Translucent Dark Emerald / Gold / Sky / Violet / Coral */
+html.dark .bg-\[\#E3F5EB\],
+html.dark .bg-\[\#E3F5EB\]\/60,
+html.dark .bg-\[\#E3F5EB\]\/65,
+html.dark .bg-\[\#E3F5EB\]\/70,
+html.dark .bg-\[\#E3F5EB\]\/75,
+html.dark .bg-\[\#E3F5EB\]\/95,
+html.dark .bg-\[\#ECFDF5\],
+html.dark .bg-\[\#EDF5F0\],
+html.dark .bg-\[\#F2FBF6\] {
+  background-color: rgba(16, 185, 129, 0.14) !important;
+}
+
+html.dark .bg-\[\#ECF7DC\],
+html.dark .bg-\[\#EBF7D6\] {
+  background-color: rgba(146, 213, 0, 0.14) !important;
+}
+
+html.dark .bg-\[\#FDF6DC\],
+html.dark .bg-\[\#FDF6DC\]\/80,
+html.dark .bg-\[\#FDF6DC\]\/95,
+html.dark .bg-\[\#FDF3C4\],
+html.dark .bg-\[\#FEF3C7\],
+html.dark .bg-\[\#FEF3C7\]\/95,
+html.dark .bg-\[\#FFF4E0\],
+html.dark .bg-\[\#FFFDF4\] {
+  background-color: rgba(235, 180, 14, 0.14) !important;
+}
+
+html.dark .bg-\[\#E0F2FE\],
+html.dark .bg-\[\#E0F2FE\]\/95,
+html.dark .bg-\[\#F0F9FF\],
+html.dark .bg-\[\#EEF6FF\],
+html.dark .bg-\[\#E4F4F7\],
+html.dark .bg-\[\#E4F5F8\],
+html.dark .bg-\[\#DCF7F5\] {
+  background-color: rgba(14, 165, 233, 0.16) !important;
+}
+
+html.dark .bg-\[\#EDE9FE\],
+html.dark .bg-\[\#F3E8FF\],
+html.dark .bg-\[\#F5F0FF\],
+html.dark .bg-\[\#FAF8FF\] {
+  background-color: rgba(139, 92, 246, 0.16) !important;
+}
+
+html.dark .bg-\[\#FCEBE6\],
+html.dark .bg-\[\#FCEBE6\]\/65,
+html.dark .bg-\[\#FCE9E4\],
+html.dark .bg-\[\#FDE8E2\],
+html.dark .bg-\[\#FDECEA\],
+html.dark .bg-\[\#FEE2E2\] {
+  background-color: rgba(239, 68, 68, 0.16) !important;
+}
+
+/* Neutral Borders -> Crisp Dark Slate-Forest Borders */
+html.dark .border-\[\#DFDDD6\],
+html.dark .border-\[\#E8E5DC\],
+html.dark .border-\[\#E8E6DE\],
+html.dark .border-\[\#E6E4DC\],
+html.dark .border-\[\#E5E2D9\],
+html.dark .border-\[\#E5E3DB\],
+html.dark .border-\[\#E4E1D9\],
+html.dark .border-\[\#E2DFD6\],
+html.dark .border-\[\#E2E0D8\],
+html.dark .border-\[\#DDDAD0\],
+html.dark .border-\[\#DDD9CF\],
+html.dark .border-\[\#D9D5CB\],
+html.dark .border-\[\#D9D9D9\],
+html.dark .border-\[\#D8D6CE\],
+html.dark .border-\[\#D8D5CC\],
+html.dark .border-\[\#D6D3C9\],
+html.dark .border-\[\#D4D0C4\],
+html.dark .border-\[\#D1D1D1\],
+html.dark .border-\[\#D1CFC7\],
+html.dark .border-\[\#CFCBC2\],
+html.dark .border-\[\#C9C6BC\],
+html.dark .border-\[\#EFECE6\],
+html.dark .border-\[\#EFECE4\],
+html.dark .border-\[\#ECEAE2\],
+html.dark .border-\[\#EAE7DF\],
+html.dark .border-\[\#F1F0EE\] {
+  border-color: #2b3731 !important;
+}
+
+html.dark .divide-\[\#E8E5DC\] > :not(:first-child),
+html.dark .divide-\[\#ECEAE2\] > :not(:first-child),
+html.dark .divide-\[\#F1EFE8\] > :not(:first-child),
+html.dark .divide-\[\#DFDDD6\] > :not(:first-child) {
+  border-color: #26312c !important;
+}
+
+html.dark .border-\[\#111111\] {
+  border-color: #4b5e54 !important;
+}
+
+/* Tinted Semantic Borders in Dark Mode */
+html.dark .border-\[\#A8DEC0\],
+html.dark .border-\[\#A9DEC0\],
+html.dark .border-\[\#B8E5CC\],
+html.dark .border-\[\#B9DEC8\],
+html.dark .border-\[\#C4DDD0\],
+html.dark .border-\[\#C9DFD0\],
+html.dark .border-\[\#D8E5DC\],
+html.dark .border-\[\#A7F3D0\] {
+  border-color: rgba(52, 211, 153, 0.34) !important;
+}
+html.dark .border-\[\#C5E49A\],
+html.dark .border-\[\#C6E396\] {
+  border-color: rgba(163, 230, 53, 0.34) !important;
+}
+html.dark .border-\[\#EBD58B\],
+html.dark .border-\[\#EFE0A8\],
+html.dark .border-\[\#EFE5BF\],
+html.dark .border-\[\#FCD34D\] {
+  border-color: rgba(251, 191, 36, 0.36) !important;
+}
+html.dark .border-\[\#7DD3FC\],
+html.dark .border-\[\#BAE6FD\],
+html.dark .border-\[\#93C5FD\],
+html.dark .border-\[\#BFD9FA\],
+html.dark .border-\[\#A8DAE3\],
+html.dark .border-\[\#B5DFE6\] {
+  border-color: rgba(56, 189, 248, 0.38) !important;
+}
+html.dark .border-\[\#C4B5FD\],
+html.dark .border-\[\#D8B4FE\],
+html.dark .border-\[\#B9A4E8\] {
+  border-color: rgba(167, 139, 250, 0.38) !important;
+}
+html.dark .border-\[\#E7A18E\],
+html.dark .border-\[\#F0C4B8\],
+html.dark .border-\[\#F3C5B9\],
+html.dark .border-\[\#F5C2BA\],
+html.dark .border-\[\#FCA5A5\] {
+  border-color: rgba(248, 113, 113, 0.38) !important;
+}
+
+/* Primary & Secondary Text Contrast in Dark Mode */
+html.dark .text-\[\#111111\],
+html.dark .text-\[\#1E1E1E\],
+html.dark .text-\[\#222222\] {
+  color: #f3f5f2 !important;
+}
+
+html.dark .text-\[\#2D2D2D\],
+html.dark .text-\[\#2E2E2E\],
+html.dark .text-\[\#333333\],
+html.dark .text-\[\#3A3A3A\],
+html.dark .text-\[\#3B3B3B\] {
+  color: #cfd6d1 !important;
+}
+
+html.dark .text-\[\#474747\],
+html.dark .text-\[\#4A4A4A\],
+html.dark .text-\[\#555555\],
+html.dark .text-\[\#666666\],
+html.dark .text-\[\#6F6F6F\] {
+  color: #9ba8a1 !important;
+}
+
+/* Preserve dark ink on bright harvest-yellow & prairie-lime solid pills/buttons! */
+html.dark .bg-\[\#EBB40E\],
+html.dark .bg-\[\#EBB40E\] *,
+html.dark .bg-\[\#92D500\],
+html.dark .bg-\[\#92D500\] *,
+html.dark .bg-\[\#F2BE22\],
+html.dark .bg-\[\#F2BE22\] * {
+  color: #111111 !important;
+}
+
+/* Brighten dark forest/emerald/amber/sky/violet/red text accents for crisp legibility on dark surfaces */
+html.dark .text-\[\#00873A\],
+html.dark .text-\[\#007432\],
+html.dark .text-\[\#006B2E\],
+html.dark .text-\[\#005A26\],
+html.dark .text-\[\#005222\],
+html.dark .text-\[\#004A20\],
+html.dark .text-\[\#065F46\],
+html.dark .text-\[\#14532D\],
+html.dark .text-\[\#1F4230\] {
+  color: #4ade80 !important;
+}
+
+html.dark .text-\[\#2F4D00\],
+html.dark .text-\[\#3F6300\],
+html.dark .text-\[\#4E7A00\] {
+  color: #bef264 !important;
+}
+
+html.dark .text-\[\#6E5100\],
+html.dark .text-\[\#614300\],
+html.dark .text-\[\#78350F\],
+html.dark .text-\[\#7A5600\],
+html.dark .text-\[\#7A5B00\],
+html.dark .text-\[\#8F6900\],
+html.dark .text-\[\#92400E\],
+html.dark .text-\[\#946D00\],
+html.dark .text-\[\#9B6B00\],
+html.dark .text-\[\#A17800\],
+html.dark .text-\[\#B45309\],
+html.dark .text-\[\#D97706\] {
+  color: #fbbf24 !important;
+}
+
+html.dark .text-\[\#0F7B8A\],
+html.dark .text-\[\#0E5E6B\],
+html.dark .text-\[\#095560\],
+html.dark .text-\[\#084C56\],
+html.dark .text-\[\#005C59\],
+html.dark .text-\[\#006B68\],
+html.dark .text-\[\#007E7A\],
+html.dark .text-\[\#075985\],
+html.dark .text-\[\#0369A1\],
+html.dark .text-\[\#0284C7\],
+html.dark .text-\[\#0A5E82\],
+html.dark .text-\[\#1696A8\],
+html.dark .text-\[\#355680\] {
+  color: #38bdf8 !important;
+}
+
+html.dark .text-\[\#4C1D95\],
+html.dark .text-\[\#581C87\],
+html.dark .text-\[\#5B21B6\],
+html.dark .text-\[\#6D28D9\],
+html.dark .text-\[\#6B5B95\] {
+  color: #c4b5fd !important;
+}
+
+html.dark .text-\[\#5C190E\],
+html.dark .text-\[\#812411\],
+html.dark .text-\[\#881313\],
+html.dark .text-\[\#8C2B11\],
+html.dark .text-\[\#8F2819\],
+html.dark .text-\[\#991B1B\],
+html.dark .text-\[\#9A2512\],
+html.dark .text-\[\#9A2D11\],
+html.dark .text-\[\#9B1C1C\],
+html.dark .text-\[\#A83812\],
+html.dark .text-\[\#B83B1A\] {
+  color: #fca5a5 !important;
+}
+
+/* Hover States in Dark Mode */
+html.dark .hover\:bg-\[\#F5F4F0\]:hover,
+html.dark .hover\:bg-\[\#F5F4F0\]\/60:hover,
+html.dark .hover\:bg-\[\#F2F0E8\]:hover,
+html.dark .hover\:bg-\[\#EAE7DE\]:hover,
+html.dark .hover\:bg-\[\#E3F5EB\]:hover,
+html.dark .hover\:bg-\[\#D2EEDF\]:hover,
+html.dark .hover\:bg-\[\#F7EBBF\]:hover {
+  background-color: #24302a !important;
+}
+html.dark .hover\:text-\[\#111111\]:hover {
+  color: #ffffff !important;
+}
+html.dark .hover\:border-\[\#111111\]:hover {
+  border-color: #6ee7b7 !important;
+}
+
+/* Inputs, Selects & Textareas in Dark Mode */
+html.dark input:not([type="range"]):not([type="checkbox"]):not([type="radio"]),
+html.dark select,
+html.dark textarea {
+  background-color: #19211d !important;
+  border-color: #324039 !important;
+  color: #f3f5f2 !important;
+}
+html.dark input::placeholder,
+html.dark textarea::placeholder {
+  color: #829189 !important;
+}
+
+/* Recharts Charts, Grids, Axes & Tooltips in Dark Mode */
+html.dark .recharts-cartesian-grid line {
+  stroke: #26322c !important;
+}
+html.dark .recharts-cartesian-axis-tick-value,
+html.dark .recharts-text {
+  fill: #b9c4be !important;
+}
+html.dark .recharts-default-tooltip {
+  background-color: #151c19 !important;
+  border-color: #324039 !important;
+  color: #f3f5f2 !important;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.55) !important;
+}
+html.dark .recharts-tooltip-label {
+  color: #f3f5f2 !important;
+}
+html.dark .recharts-legend-item-text {
+  color: #cfd6d1 !important;
+}
+
+/* Leaflet Map Container & Popups in Dark Mode */
+html.dark .leaflet-container {
+  background: #101614;
+}
+html.dark .leaflet-popup-content-wrapper,
+html.dark .leaflet-popup-tip {
+  background-color: #151c19 !important;
+  color: #f3f5f2 !important;
+  border-color: #2f3e37 !important;
+}
+html.dark .leaflet-control-attribution {
+  background: rgba(18, 24, 21, 0.85) !important;
+  color: #9ba8a1 !important;
+}
+html.dark .leaflet-control-attribution a {
+  color: #6ee7b7 !important;
+}
+
+/* RTL (Arabic & Urdu) Layout Safeguards: Keep Maps, Charts & Numeric Inputs LTR */
+html[dir='rtl'] .leaflet-container,
+html[dir='rtl'] .recharts-wrapper,
+html[dir='rtl'] canvas,
+html[dir='rtl'] input[type='number'] {
+  direction: ltr;
+}
+html[dir='rtl'] .font-mono-tech {
+  direction: ltr;
+  unicode-bidi: isolate;
+}

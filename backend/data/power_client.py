@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
 from typing import Any
 
@@ -8,6 +9,55 @@ import pandas as pd
 import requests
 
 MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+POWER_BASE = "https://power.larc.nasa.gov/api/temporal"
+
+
+@lru_cache(maxsize=32)
+def load_power_payload(lat: float, lon: float, years: int, end_date: str) -> dict[str, Any]:
+    """Fetch POWER climatology and daily series for the frontend's displayed fields."""
+    end = date.fromisoformat(end_date)
+    start_year = end.year - years
+    start_date = date(start_year, 1, 1)
+    parameters = "T2M,T2M_MIN,PRECTOTCORR,ALLSKY_SFC_SW_DWN,RH2M,GWETROOT,GWETTOP"
+    common = {
+        "parameters": parameters,
+        "community": "AG",
+        "latitude": lat,
+        "longitude": lon,
+        "format": "JSON",
+        "time-standard": "UTC",
+    }
+    climatology_response = requests.get(
+        f"{POWER_BASE}/climatology/point", params=common, timeout=45
+    )
+    climatology_response.raise_for_status()
+    daily_response = requests.get(
+        f"{POWER_BASE}/daily/point",
+        params={**common, "start": start_date.strftime("%Y%m%d"), "end": end.strftime("%Y%m%d")},
+        timeout=120,
+    )
+    daily_response.raise_for_status()
+    climatology = climatology_response.json()
+    daily = daily_response.json()
+    if not climatology.get("properties", {}).get("parameter") or not daily.get("properties", {}).get("parameter"):
+        raise RuntimeError("NASA POWER returned an incomplete payload")
+    complete_years = list(range(start_year, end.year))
+    return {
+        "source": "NASA POWER",
+        "climatology": climatology,
+        "daily": daily,
+        "period": {
+            "daily_start": start_date.isoformat(),
+            "daily_end": end.isoformat(),
+            "complete_years": complete_years,
+            "recent_data_end": end.isoformat(),
+        },
+    }
+
+
+def latest_power_end_date() -> str:
+    """Avoid requesting the newest few days before POWER's NRT data has settled."""
+    return (datetime.now(timezone.utc).date() - timedelta(days=5)).isoformat()
 
 
 @lru_cache(maxsize=32)

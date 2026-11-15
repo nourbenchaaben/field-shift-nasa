@@ -1,6 +1,12 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import L from 'leaflet';
 import { computePolygonAreaHectares, getPolygonCenter } from '../data/agronomyData';
+import {
+  buildScientificFieldHeatmap,
+  FieldPhysics,
+  HeatmapResult,
+  ScientificLayerType,
+} from '../utils/scientificHeatmap';
 import { Check, Layers, MapPin, Move, PenTool, RotateCcw } from 'lucide-react';
 
 export interface UnifiedFieldOverlay {
@@ -11,8 +17,15 @@ export interface UnifiedFieldOverlay {
   bottomMetric?: string;
   moisturePct?: number;
   ndvi?: number;
+  tempC?: number;
+  slopeDeg?: number;
   soilRichnessScore?: number;
   chemicalReductionPct?: number;
+  scientificLayer?: ScientificLayerType;
+  seasonIndex?: number;
+  physics?: FieldPhysics;
+  /** Concise honest provenance tag (e.g. "NASA POWER baseline" or "Projected seasonal model") */
+  sourceNote?: string;
 }
 
 interface FarmLeafletMapProps {
@@ -21,23 +34,9 @@ interface FarmLeafletMapProps {
   boundary: [number, number][];
   heightClass?: string;
   fieldOverlay?: UnifiedFieldOverlay;
-  overlayMode?: 'crop' | 'moisture' | 'health';
+  overlayMode?: 'crop' | 'moisture' | 'health' | 'climate' | 'slope';
   onChangeLocation?: (lat: number, lng: number) => void;
   onChangeBoundary?: (newBoundary: [number, number][]) => void;
-}
-
-function getMoistureShade(moisturePct: number): string {
-  if (moisturePct >= 68) return '#0A6E8A';
-  if (moisturePct >= 50) return '#1696A8';
-  if (moisturePct >= 35) return '#44BE7E';
-  return '#EBB40E';
-}
-
-function getHealthShade(ndvi: number): string {
-  if (ndvi >= 0.72) return '#00873A';
-  if (ndvi >= 0.6) return '#44BE7E';
-  if (ndvi >= 0.5) return '#92D500';
-  return '#EBB40E';
 }
 
 export const FarmLeafletMap: React.FC<FarmLeafletMapProps> = ({
@@ -53,6 +52,7 @@ export const FarmLeafletMap: React.FC<FarmLeafletMapProps> = ({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<L.Map | null>(null);
   const tileLayerRef = useRef<L.TileLayer | null>(null);
+  const labelLayerRef = useRef<L.TileLayer | null>(null);
   const overlayGroupRef = useRef<L.LayerGroup | null>(null);
   const lastRegionKeyRef = useRef<string>('');
   const isDraggingRef = useRef<boolean>(false);
@@ -60,6 +60,104 @@ export const FarmLeafletMap: React.FC<FarmLeafletMapProps> = ({
   const [basemap, setBasemap] = useState<'satellite' | 'street'>('satellite');
   const [toolMode, setToolMode] = useState<'resize' | 'pin' | 'draw'>('resize');
   const [draftPoints, setDraftPoints] = useState<[number, number][]>([]);
+  const [hoverProbe, setHoverProbe] = useState<{
+    valueText: string;
+    zoneLabel: string;
+    hex: string;
+  } | null>(null);
+
+  // Resolve active scientific raster layer for non-onboarding views
+  const activeScientificLayer: ScientificLayerType = useMemo(() => {
+    if (fieldOverlay?.scientificLayer) return fieldOverlay.scientificLayer;
+    if (overlayMode === 'moisture') return 'moisture';
+    if (overlayMode === 'climate') return 'climate';
+    if (overlayMode === 'slope') return 'slope';
+    return 'vitality';
+  }, [fieldOverlay?.scientificLayer, overlayMode]);
+
+  // Exact zero-mean calibrated physical target matching live NASA POWER / MODIS / SRTM / Rotation Lab metrics
+  const scientificHeatmap: HeatmapResult | null = useMemo(() => {
+    if (mode === 'onboarding' || boundary.length < 3) return null;
+
+    let targetPhysicalValue = 0.56;
+    if (activeScientificLayer === 'moisture') {
+      targetPhysicalValue = fieldOverlay?.moisturePct ?? 45;
+    } else if (activeScientificLayer === 'climate') {
+      targetPhysicalValue = fieldOverlay?.tempC ?? 18;
+    } else if (activeScientificLayer === 'slope') {
+      targetPhysicalValue = fieldOverlay?.slopeDeg ?? fieldOverlay?.physics?.slopeDeg ?? 2.0;
+    } else if (activeScientificLayer === 'nitrogen') {
+      targetPhysicalValue = fieldOverlay?.soilRichnessScore ?? 70;
+    } else {
+      if (fieldOverlay?.ndvi !== undefined) {
+        targetPhysicalValue = fieldOverlay.ndvi;
+      } else if (fieldOverlay?.soilRichnessScore !== undefined) {
+        targetPhysicalValue = Number(
+          Math.min(0.84, Math.max(0.24, 0.22 + (fieldOverlay.soilRichnessScore / 100) * 0.58)).toFixed(2)
+        );
+      }
+    }
+
+    const fieldSeed = Math.abs(center[0] * 17.31 + center[1] * 31.73);
+    const seasonPhase = fieldOverlay?.seasonIndex ?? 0;
+
+    return buildScientificFieldHeatmap({
+      boundary,
+      targetPhysicalValue,
+      layer: activeScientificLayer,
+      fieldSeed,
+      seasonPhase,
+      physics: fieldOverlay?.physics,
+    });
+  }, [
+    mode,
+    boundary,
+    activeScientificLayer,
+    fieldOverlay?.moisturePct,
+    fieldOverlay?.tempC,
+    fieldOverlay?.slopeDeg,
+    fieldOverlay?.soilRichnessScore,
+    fieldOverlay?.ndvi,
+    fieldOverlay?.seasonIndex,
+    fieldOverlay?.physics,
+    center,
+  ]);
+
+  // Attach interactive cursor readout for exact point inspection inside the field polygon
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || mode === 'onboarding' || !scientificHeatmap) {
+      setHoverProbe(null);
+      return;
+    }
+
+    const onMove = (ev: L.LeafletMouseEvent) => {
+      const sample = scientificHeatmap.sampleAt(ev.latlng.lat, ev.latlng.lng);
+      if (!sample.inside) {
+        setHoverProbe(null);
+        return;
+      }
+      const { decimals, unit } = scientificHeatmap.scale;
+      const formatted =
+        decimals > 0
+          ? `${sample.physicalValue.toFixed(decimals)}${unit === 'NDVI' ? ` ${unit}` : unit}`
+          : `${Math.round(sample.physicalValue)}${unit}`;
+      setHoverProbe({
+        valueText: formatted,
+        zoneLabel: sample.zoneLabel,
+        hex: sample.hex,
+      });
+    };
+
+    const onOut = () => setHoverProbe(null);
+
+    map.on('mousemove', onMove);
+    map.on('mouseout', onOut);
+    return () => {
+      map.off('mousemove', onMove);
+      map.off('mouseout', onOut);
+    };
+  }, [mode, scientificHeatmap]);
 
   // Initialize Leaflet map once
   useEffect(() => {
@@ -88,29 +186,41 @@ export const FarmLeafletMap: React.FC<FarmLeafletMapProps> = ({
       mapRef.current = null;
       overlayGroupRef.current = null;
       tileLayerRef.current = null;
+      labelLayerRef.current = null;
     };
   }, []);
 
-  // Switch tile basemap cleanly
+  // Switch tile basemap cleanly (Satellite Hybrid with place/road labels vs Street Map)
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
 
     if (tileLayerRef.current) {
       map.removeLayer(tileLayerRef.current);
+      tileLayerRef.current = null;
+    }
+    if (labelLayerRef.current) {
+      map.removeLayer(labelLayerRef.current);
+      labelLayerRef.current = null;
     }
 
-    const url =
-      basemap === 'satellite'
-        ? 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
-        : 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+    if (basemap === 'satellite') {
+      tileLayerRef.current = L.tileLayer(
+        'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+        { maxZoom: 19, attribution: 'Satellite &copy; Esri · NASA POWER Linked' }
+      ).addTo(map);
 
-    const attribution =
-      basemap === 'satellite'
-        ? 'Satellite &copy; Esri · NASA POWER Linked'
-        : '&copy; OpenStreetMap · Tadawol Global';
-
-    tileLayerRef.current = L.tileLayer(url, { maxZoom: 19, attribution }).addTo(map);
+      // Crisp village, city & boundary labels on top of satellite imagery (Hybrid mode)
+      labelLayerRef.current = L.tileLayer(
+        'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+        { maxZoom: 19, opacity: 0.9 }
+      ).addTo(map);
+    } else {
+      tileLayerRef.current = L.tileLayer(
+        'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
+        { maxZoom: 19, attribution: 'Map &copy; Esri · Tadawol Global' }
+      ).addTo(map);
+    }
   }, [basemap]);
 
   // Onboarding click handler (relocate or draw custom field boundary)
@@ -283,33 +393,48 @@ export const FarmLeafletMap: React.FC<FarmLeafletMapProps> = ({
       return;
     }
 
-    // UNIFIED SINGLE-SURFACE FIELD OVERLAY for Dashboard, History & Rotation Lab (Zero 4-part split!)
+    // SCIENTIFIC SPATIAL HEATMAP FIELD OVERLAY for Rotation Lab, Dashboard & History
     if (boundary.length >= 3) {
-      const cropColor = fieldOverlay?.cropColor ?? '#00873A';
-      let fillColor = cropColor;
-      if (overlayMode === 'moisture' && fieldOverlay?.moisturePct !== undefined) {
-        fillColor = getMoistureShade(fieldOverlay.moisturePct);
-      } else if (overlayMode === 'health' && fieldOverlay?.ndvi !== undefined) {
-        fillColor = getHealthShade(fieldOverlay.ndvi);
+      const meanAccent = scientificHeatmap?.meanHex ?? fieldOverlay?.cropColor ?? '#00873A';
+
+      // Polygon-clipped spatial precision-ag gradient raster (Amber -> Lime -> Forest Green / Moisture)
+      if (scientificHeatmap) {
+        L.imageOverlay(scientificHeatmap.dataUrl, scientificHeatmap.bounds, {
+          opacity: 0.86,
+          interactive: false,
+        }).addTo(group);
       }
 
-      // Outer subtle glow ring for Rotation Lab soil-enrichment visual
+      // Outer subtle dashed GIS buffer ring for Rotation Lab
       if (mode === 'rotation-lab') {
         L.polygon(boundary, {
-          color: '#EBB40E',
-          weight: 7,
-          opacity: 0.35,
+          color: '#FFFFFF',
+          weight: 5,
+          opacity: 0.28,
           fillOpacity: 0,
         }).addTo(group);
       }
 
-      // Single unified land surface polygon
+      // Crisp scientific parcel boundary outline (no flat opaque fill hiding the spatial heatmap!)
       L.polygon(boundary, {
         color: '#FFFFFF',
-        weight: 3,
-        fillColor,
-        fillOpacity: 0.56,
+        weight: 2.5,
+        dashArray: mode === 'rotation-lab' ? '6 4' : undefined,
+        fillColor: meanAccent,
+        fillOpacity: scientificHeatmap ? 0 : 0.45,
       }).addTo(group);
+
+      // Precision GIS corner coordinate nodes on the parcel perimeter
+      boundary.forEach((pt) => {
+        L.circleMarker(pt, {
+          radius: 3.5,
+          color: '#111111',
+          weight: 1.5,
+          fillColor: '#FFFEFB',
+          fillOpacity: 1,
+          interactive: false,
+        }).addTo(group);
+      });
 
       const polyCenter = getPolygonCenter(boundary);
       const cropTitle = fieldOverlay?.cropName ?? 'Active Crop';
@@ -317,19 +442,19 @@ export const FarmLeafletMap: React.FC<FarmLeafletMapProps> = ({
       const subLine =
         fieldOverlay?.bottomMetric ??
         fieldOverlay?.stageLabel ??
-        `${computePolygonAreaHectares(boundary).toFixed(1)} ha Unified Field`;
+        `${computePolygonAreaHectares(boundary).toFixed(1)} ha Field`;
 
-      const centerHtml = `<div style="transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;gap:5px;pointer-events:none;">
+      const centerHtml = `<div style="transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;gap:4px;pointer-events:none;">
         ${
           topBadge
-            ? `<div style="background:#EBB40E;color:#111111;font-size:10px;font-weight:800;padding:2.5px 10px;border-radius:999px;border:1.5px solid #111111;letter-spacing:0.04em;white-space:nowrap;box-shadow:0 4px 12px rgba(0,0,0,0.28);">${topBadge}</div>`
+            ? `<div style="background:#EBB40E;color:#111111;font-size:10px;font-weight:800;padding:2px 9px;border-radius:999px;border:1.5px solid #111111;letter-spacing:0.04em;white-space:nowrap;box-shadow:0 3px 10px rgba(0,0,0,0.28);">${topBadge}</div>`
             : ''
         }
-        <div style="display:inline-flex;align-items:center;gap:7px;background:rgba(255,254,251,0.97);color:#111111;padding:6px 14px;border-radius:999px;border:2px solid #111111;box-shadow:0 8px 22px rgba(0,0,0,0.28);white-space:nowrap;">
-          <span style="display:inline-block;width:10px;height:10px;border-radius:999px;background:${fillColor};border:1px solid rgba(0,0,0,0.2);"></span>
-          <span style="font-size:13px;font-weight:800;">${cropTitle}</span>
+        <div style="display:inline-flex;align-items:center;gap:6px;background:rgba(255,254,251,0.94);color:#111111;padding:4px 12px;border-radius:999px;border:1.5px solid #111111;box-shadow:0 6px 18px rgba(0,0,0,0.26);white-space:nowrap;">
+          <span style="display:inline-block;width:9px;height:9px;border-radius:999px;background:${meanAccent};border:1px solid rgba(0,0,0,0.25);"></span>
+          <span style="font-size:12px;font-weight:800;">${cropTitle}</span>
         </div>
-        <div style="background:rgba(17,17,17,0.88);color:#F5F4F0;font-size:11px;font-weight:700;padding:3px 11px;border-radius:999px;white-space:nowrap;box-shadow:0 4px 12px rgba(0,0,0,0.22);">
+        <div style="background:rgba(17,17,17,0.86);color:#F5F4F0;font-size:10.5px;font-weight:700;padding:2.5px 10px;border-radius:999px;white-space:nowrap;box-shadow:0 4px 12px rgba(0,0,0,0.22);">
           ${subLine}
         </div>
       </div>`;
@@ -348,6 +473,7 @@ export const FarmLeafletMap: React.FC<FarmLeafletMapProps> = ({
     boundary,
     fieldOverlay,
     overlayMode,
+    scientificHeatmap,
     toolMode,
     draftPoints,
     onChangeBoundary,
@@ -477,10 +603,10 @@ export const FarmLeafletMap: React.FC<FarmLeafletMapProps> = ({
         </div>
       )}
 
-      {/* Bottom-left contextual hint */}
-      <div className="absolute bottom-3 left-3 z-[400] bg-[#FFFEFB]/95 backdrop-blur-sm border border-[#D9D9D9] rounded-xl px-3 py-1.5 shadow-sm max-w-[310px]">
+      {/* Bottom-left contextual hint / calibrated scientific colorbar legend */}
+      <div className="absolute bottom-3 left-3 z-[400] bg-[#FFFEFB]/96 backdrop-blur-sm border border-[#D1CFC7] rounded-xl px-3.5 py-2 shadow-md max-w-[335px]">
         {mode === 'onboarding' ? (
-          <div className="flex items-center gap-2 text-[11px] font-medium text-[#474747]">
+          <div className="flex items-center gap-2 text-[11px] font-semibold text-[#2E2E2E]">
             <span className="inline-block w-2.5 h-2.5 rounded-full bg-[#EBB40E] border border-[#111111] shrink-0" />
             <span>
               {toolMode === 'resize'
@@ -490,37 +616,89 @@ export const FarmLeafletMap: React.FC<FarmLeafletMapProps> = ({
                   : 'Click around your land edges to outline your field'}
             </span>
           </div>
-        ) : overlayMode === 'moisture' ? (
-          <div className="space-y-1">
-            <div className="text-[10px] font-bold uppercase tracking-wider text-[#474747]">
-              NASA POWER Soil Wetness
+        ) : scientificHeatmap ? (
+          <div className="space-y-1.5 min-w-[250px]">
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-[10px] font-extrabold uppercase tracking-wider text-[#111111]">
+                {activeScientificLayer === 'moisture'
+                  ? 'Root-Zone Soil Wetness'
+                  : activeScientificLayer === 'climate'
+                    ? 'Local Climate (NASA)'
+                    : activeScientificLayer === 'slope'
+                      ? 'Field Slope & Erosion (SRTM)'
+                      : activeScientificLayer === 'nitrogen'
+                        ? 'Soil Fertility & Nitrogen'
+                        : 'Crop & Soil Vitality (NDVI)'}
+              </span>
+              <span
+                className={`text-[10px] font-mono-tech font-extrabold ${
+                  activeScientificLayer === 'moisture' || activeScientificLayer === 'climate'
+                    ? 'text-[#0A5E82]'
+                    : 'text-[#007432]'
+                }`}
+              >
+                Mean{' '}
+                {scientificHeatmap.scale.decimals > 0
+                  ? `${scientificHeatmap.meanPhysical.toFixed(scientificHeatmap.scale.decimals)}${
+                      scientificHeatmap.scale.unit === 'NDVI'
+                        ? ` ${scientificHeatmap.scale.unit}`
+                        : scientificHeatmap.scale.unit
+                    }`
+                  : `${Math.round(scientificHeatmap.meanPhysical)}${scientificHeatmap.scale.unit}`}
+              </span>
             </div>
-            <div className="flex items-center gap-1.5 text-[10px] font-mono-tech text-[#474747]">
-              <span>Dry</span>
-              <div className="h-2 w-28 rounded-full bg-gradient-to-r from-[#EBB40E] via-[#44BE7E] to-[#0A6E8A]" />
-              <span>Wet</span>
-            </div>
-          </div>
-        ) : overlayMode === 'health' ? (
-          <div className="space-y-1">
-            <div className="text-[10px] font-bold uppercase tracking-wider text-[#474747]">
-              Crop Health Index (NDVI)
-            </div>
-            <div className="flex items-center gap-1.5 text-[10px] font-mono-tech text-[#474747]">
-              <span>Fair</span>
-              <div className="h-2 w-28 rounded-full bg-gradient-to-r from-[#EBB40E] via-[#92D500] to-[#00873A]" />
-              <span>Thriving</span>
-            </div>
-          </div>
-        ) : (
-          <div className="flex items-center gap-2 text-[11px] font-semibold text-[#111111]">
-            <span
-              className="inline-block w-2.5 h-2.5 rounded-full shrink-0"
-              style={{ backgroundColor: fieldOverlay?.cropColor ?? '#00873A' }}
+
+            <div
+              className="h-2.5 w-full rounded-full border border-black/10"
+              style={{ background: scientificHeatmap.scale.cssGradient }}
             />
-            <span>Unified single-surface farm view</span>
+
+            <div className="flex items-center justify-between text-[10px] font-mono-tech font-semibold text-[#3A3A3A]">
+              {scientificHeatmap.scale.ticks.map((tk) => (
+                <span key={tk.label}>{tk.label}</span>
+              ))}
+            </div>
+
+            <div className="text-[10px] text-[#3A3A3A] pt-1 border-t border-[#ECEAE2] space-y-0.5">
+              {hoverProbe ? (
+                <div className="flex items-center gap-1.5 text-[#111111] font-bold">
+                  <span
+                    className="w-2 h-2 rounded-full shrink-0 border border-black/20"
+                    style={{ backgroundColor: hoverProbe.hex }}
+                  />
+                  <span>
+                    Cursor: {hoverProbe.valueText} ({hoverProbe.zoneLabel})
+                  </span>
+                </div>
+              ) : (
+                <div>
+                  Field range:{' '}
+                  <strong>
+                    {scientificHeatmap.scale.decimals > 0
+                      ? scientificHeatmap.minPhysical.toFixed(scientificHeatmap.scale.decimals)
+                      : Math.round(scientificHeatmap.minPhysical)}
+                  </strong>{' '}
+                  to{' '}
+                  <strong>
+                    {scientificHeatmap.scale.decimals > 0
+                      ? `${scientificHeatmap.maxPhysical.toFixed(scientificHeatmap.scale.decimals)}${
+                          scientificHeatmap.scale.unit === 'NDVI'
+                            ? ` ${scientificHeatmap.scale.unit}`
+                            : scientificHeatmap.scale.unit
+                        }`
+                      : `${Math.round(scientificHeatmap.maxPhysical)}${scientificHeatmap.scale.unit}`}
+                  </strong>
+                  {fieldOverlay?.physics?.slopeDeg !== undefined &&
+                    ` (${fieldOverlay.physics.slopeDeg}° slope, ${fieldOverlay.physics.soilType ?? 'Loamy'})`}
+                </div>
+              )}
+              <div className="text-[9.5px] text-[#4A4A4A]">
+                {fieldOverlay?.sourceNote ??
+                  'Spatial catena model anchored to NASA POWER / MODIS baseline'}
+              </div>
+            </div>
           </div>
-        )}
+        ) : null}
       </div>
     </div>
   );

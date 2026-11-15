@@ -5,6 +5,7 @@ export type AppScreen =
   | 'calendar'
   | 'history'
   | 'rotation-lab'
+  | 'market-finance'
   | 'predictions';
 
 export type SoilType = 'Loamy' | 'Clay' | 'Sandy' | 'Silt' | 'Peaty';
@@ -30,7 +31,7 @@ export interface Coordinates {
   lng: number;
 }
 
-export type RiskLevel = 'green' | 'yellow' | 'red';
+export type RiskLevel = 'green' | 'yellow' | 'red' | 'none';
 
 export interface MonthlyRiskCalendarRow {
   month: string; // Jan..Dec
@@ -40,19 +41,20 @@ export interface MonthlyRiskCalendarRow {
   heavyRainLevel: RiskLevel;
   soilWetness: number; // 0..1 GWETROOT or SMAP sm_rootzone (yellow <= 0.45, red <= 0.30)
   drySoilLevel: RiskLevel;
-  ndvi: number; // -0.2..1.0 MODIS MOD13Q1 x0.0001 (yellow <= 0.35, red <= 0.25)
+  ndvi: number | null;
   bareFieldLevel: RiskLevel;
 }
 
 export interface NasaPowerDailyPoint {
   date: string; // YYYY-MM-DD
   label: string; // e.g., "Dec 18"
-  tempC: number;
-  rainMm: number;
-  solarMj: number;
-  humidityPct: number;
-  rootWetnessPct: number; // 0..100 (GWETROOT * 100)
-  topWetnessPct: number; // 0..100 (GWETTOP * 100)
+  tempC: number | null;
+  minTempC: number | null;
+  rainMm: number | null;
+  solarMj: number | null;
+  humidityPct: number | null;
+  rootWetnessPct: number | null;
+  topWetnessPct: number | null;
 }
 
 export interface NasaPowerMonthlyPoint {
@@ -61,6 +63,7 @@ export interface NasaPowerMonthlyPoint {
   minTempC: number;
   rainMmMonth: number;
   rootWetnessPct: number;
+  topWetnessPct: number;
   solarMj: number;
   humidityPct: number;
 }
@@ -71,7 +74,7 @@ export interface Phase2SatelliteLayer {
   shortName: string;
   assetId: string;
   resolution: string;
-  status: 'Ready' | 'Active Estimate';
+  status: 'Ready' | 'Active Estimate' | 'Unavailable';
   metricLabel: string;
   metricValue: string;
   plainSummary: string;
@@ -81,6 +84,8 @@ export interface Phase2SatelliteLayer {
 export interface NasaPowerDataset {
   source: 'nasa-power-live' | 'nasa-power-fallback';
   fetchedAt: string;
+  dailyDataThrough: string;
+  recentDaysAvailable: number;
   yearsAnalyzed: string; // e.g., "2021–2025 (5 complete years)"
   elevationM: number;
   avgTempC: number;
@@ -91,12 +96,15 @@ export interface NasaPowerDataset {
   frostDaysPerYear: number;
   heavyRainDaysPerYear: number;
   autumnRainOnset: string; // e.g., "Sep 24" (first day >= Sep 1 with 3-day rain >= 20mm)
-  recentRain14dMm: number;
+  recentRain14dMm: number | null;
   rootMoisturePct: number;
   topMoisturePct: number;
   humidityPct: number;
   solarMj: number;
-  ndviEstimate: number;
+  ndviEstimate: number | null;
+  monthlySmapRootWetnessPct: (number | null)[];
+  srtmSlopeDeg: number | null;
+  satelliteCheckedAt: string;
   waterStressScore: number; // 0 (none) to 100 (severe)
   moistureStatus: 'Dry' | 'Fair' | 'Good' | 'Wet';
   moisturePlainText: string;
@@ -107,6 +115,30 @@ export interface NasaPowerDataset {
   phase2Adapters: Phase2SatelliteLayer[];
 }
 
+export interface FarmerFinanceInputs {
+  /** Strictly optional: ticked only in Registration or Profile Settings */
+  enabled: boolean;
+  /** Preferred display & planning currency code (defaults to farmer's country currency; changeable across all 42+ countries) */
+  currencyCode?: string;
+  /** REQUIRED when enabled: Total season cash / budget capacity available for the farm in chosen currency */
+  seasonBudgetCapacityLocal?: number;
+  /** REQUIRED when enabled: Non-fertilizer season spend per hectare in chosen currency (seed, plowing, water, harvest) */
+  operatingCostPerHaLocal?: number;
+  /** REQUIRED when enabled: Typical fertilizer spend per hectare per season in chosen currency */
+  fertilizerCostPerHaLocal?: number;
+  /** OPTIONAL: Last season's actual net farm profit (whole farm) to track real YoY profit growth */
+  lastSeasonNetProfitLocal?: number;
+  /** OPTIONAL: Target annual net farm profit goal (whole farm) to track goal progress */
+  targetAnnualProfitLocal?: number;
+  /** OPTIONAL: Typical irrigation, pumping & fuel spend per hectare per season */
+  irrigationEnergyCostPerHaLocal?: number;
+  /** Optional farmer buyer price overrides in chosen currency per tonne */
+  customBuyerPricesLocal?: Record<string, number>;
+  /** Include regional subsidies / eco-schemes in projection */
+  includeSubsidies: boolean;
+  updatedAt?: string;
+}
+
 export interface FarmerProfile {
   name: string;
   email: string;
@@ -115,6 +147,8 @@ export interface FarmerProfile {
   countryCode: string;
   countryName: string;
   countryFlag: string;
+  stateName?: string;
+  localityName?: string;
   climateZone: ClimateZone;
   regionLabel: string;
   coordinates: Coordinates;
@@ -127,6 +161,7 @@ export interface FarmerProfile {
   equipment: string[];
   previousCrops: string[];
   nasaPower: NasaPowerDataset;
+  financeInputs?: FarmerFinanceInputs;
 }
 
 export interface CropInfo {
@@ -234,10 +269,61 @@ export interface HistoricalSeasonRecord {
     avgTempC: number;
     moistureLabel: string;
     rootMoisturePct: number;
-    ndviAvg: number;
+    ndviAvg: number | null;
   };
   soilNotes: string;
   farmerActions: string[];
+}
+
+export interface CustomStageSpec {
+  cropId: string;
+  cropName: string;
+  cropFamily: string;
+  cropColor: string;
+  durationMonths: number;
+  whatToDo: string;
+  soilImprovementNote: string;
+  pestBreakNote: string;
+  eventTag?: string;
+}
+
+export interface PlanStageOverride {
+  cropId?: string;
+  cropName?: string;
+  cropFamily?: string;
+  cropColor?: string;
+  durationMonths?: number;
+  whatToDo?: string;
+  soilImprovementNote?: string;
+  pestBreakNote?: string;
+  eventTag?: string;
+}
+
+export interface PlanCustomization {
+  monthShift: number;
+  stageOverrides: Record<number, PlanStageOverride>;
+  customStages?: CustomStageSpec[];
+  customStrategyTitle?: string;
+  customStrategyFocus?: string;
+  recentNotes: string[];
+}
+
+export interface PendingPlanProposal {
+  id: string;
+  summary: string;
+  changeType: 'strategy-switch' | 'custom-plan' | 'stage-edit';
+  requiresDoubleConfirm: boolean;
+  details: string[];
+  previewStages?: { cropName: string; cropFamily: string; durationMonths?: number }[];
+  nextSelectedStrategyId?: string;
+  nextCustomization?: PlanCustomization | null;
+  nextScenario?: 'normal' | 'drought' | 'wet';
+  calendarAlert?: {
+    title: string;
+    description: string;
+    category: CalendarEvent['category'];
+  };
+  status: 'pending' | 'applied' | 'cancelled';
 }
 
 export interface ChatMessage {
@@ -245,6 +331,34 @@ export interface ChatMessage {
   role: 'assistant' | 'user';
   content: string;
   timestamp: string;
+  planChangeSummary?: string;
+  pendingProposal?: PendingPlanProposal;
+}
+
+export interface StrategyStageSnapshot {
+  cropName: string;
+  cropFamily: string;
+  cropColor: string;
+  durationMonths?: number;
+}
+
+export interface StrategyChangeRecord {
+  id: string;
+  recordedAt: string;
+  source: 'rotation-lab' | 'ai-advisor' | 'reset';
+  actionType: 'initial-selection' | 'strategy-switch' | 'custom-plan' | 'stage-edit' | 'reset';
+  summary: string;
+  fromStrategyTitle?: string;
+  strategyId: string;
+  strategyTitle: string;
+  tierLabel: string;
+  focusTag: string;
+  stages: StrategyStageSnapshot[];
+  metrics: {
+    yieldImprovementPct: number;
+    chemicalReductionPct: number;
+    waterSavingsPct: number;
+  };
 }
 
 export type FarmEditTab = 'location-size' | 'soil-water' | 'crops-gear';
@@ -255,6 +369,8 @@ export interface FarmRecord {
   countryCode: string;
   countryName: string;
   countryFlag: string;
+  stateName?: string;
+  localityName?: string;
   climateZone: ClimateZone;
   regionLabel: string;
   coordinates: Coordinates;
@@ -270,6 +386,9 @@ export interface FarmRecord {
   selectedStrategyId: string | null;
   customCalendarEvents: CalendarEvent[];
   completedEventIds: string[];
+  planCustomization?: PlanCustomization;
+  strategyHistory?: StrategyChangeRecord[];
+  financeInputs?: FarmerFinanceInputs;
 }
 
 export interface StoredAccount {

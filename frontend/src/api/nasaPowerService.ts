@@ -13,6 +13,20 @@ import {
 const MONTHS_ORDER = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
 const DAYS_IN_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const NASA_PROXY_URL = (
+  (import.meta.env.VITE_TADAWOL_API_URL as string | undefined) ??
+  'http://localhost:8000/api/analyze'
+).replace(/\/api\/analyze\/?$/, '/api/nasa/power');
+const SATELLITE_PROXY_URL = NASA_PROXY_URL.replace(/\/api\/nasa\/power\/?$/, '/api/nasa/satellites');
+
+interface EarthEnginePayload {
+  source?: string;
+  ndvi_clim?: Record<string, number>;
+  smap_clim?: Record<string, number>;
+  smap_monthly?: Record<string, number>;
+  slope_deg?: number;
+  elevation_m?: number;
+}
 
 function isValidVal(v: unknown): v is number {
   return typeof v === 'number' && Number.isFinite(v) && v > -900;
@@ -26,6 +40,35 @@ function formatIsoDate(yyyymmdd: string): { iso: string; label: string } {
     iso: `${y}-${yyyymmdd.slice(4, 6)}-${day}`,
     label: `${MONTH_SHORT[mIdx]} ${day}`,
   };
+}
+
+async function fetchEarthEngineData(lat: number, lon: number): Promise<EarthEnginePayload | null> {
+  const url = new URL(SATELLITE_PROXY_URL);
+  url.searchParams.set('lat', String(lat));
+  url.searchParams.set('lon', String(lon));
+  url.searchParams.set('years', '5');
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 90_000);
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    if (!response.ok) return null;
+    const result = (await response.json()) as EarthEnginePayload;
+    return result.source === 'Google Earth Engine' ? result : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function geeMonthlyValues(
+  values: Record<string, number> | undefined,
+  factor = 1
+): (number | null)[] {
+  return Array.from({ length: 12 }, (_, index) => {
+    const value = values?.[String(index + 1)];
+    return isValidVal(value) ? Number((value * factor).toFixed(1)) : null;
+  });
 }
 
 /**
@@ -62,12 +105,13 @@ export function classifyBareFieldRisk(ndvi: number): RiskLevel {
 /**
  * Estimates terrain slope (degrees) from manual choice or deterministic SRTM elevation proxy.
  */
-export function resolveSlopeDegrees(slopeOption: SlopeOption, coords: Coordinates): number {
+export function resolveSlopeDegrees(slopeOption: SlopeOption, _coords: Coordinates): number {
   if (slopeOption === 'Flat') return 1;
   if (slopeOption === 'Gentle Slope') return 5;
   if (slopeOption === 'Steep Slope') return 11;
-  const raw = Math.abs(Math.sin(coords.lat * 11.7) * Math.cos(coords.lng * 7.3));
-  return Number((1.5 + raw * 6.5).toFixed(1));
+  // Provisional scoring value only. Real SRTM slope must come from the backend
+  // Earth Engine adapter; coordinate-based pseudo-elevation is not NASA data.
+  return 5;
 }
 
 export function classifyMoisture(rootPct: number): {
@@ -111,31 +155,25 @@ function classifyWeather(avgTempC: number, recentRainMm: number): string {
   return `Chilly & ${rainPart}`;
 }
 
-/**
- * Computes seasonal MODIS MOD13Q1-style monthly greenness curve (NDVI -0.2..1.0)
- * correlated with hemisphere seasonality and moisture availability.
- */
-function estimateMonthlyNdvi(monthIdx: number, wetness01: number, lat: number): number {
-  const southern = lat < 0;
-  // Peak canopy around Mar-May in N. Hemisphere (Sep-Nov in S. Hemisphere); post-harvest bare dip in Aug-Sep (or Feb-Mar)
-  const shifted = southern ? (monthIdx + 6) % 12 : monthIdx;
-  const seasonalCurve = [0.44, 0.54, 0.66, 0.72, 0.62, 0.38, 0.24, 0.21, 0.27, 0.34, 0.4, 0.42];
-  const base = seasonalCurve[shifted] ?? 0.4;
-  const moistureMod = (wetness01 - 0.45) * 0.28;
-  return Number(Math.max(0.14, Math.min(0.88, base + moistureMod)).toFixed(2));
-}
-
 export function buildPhase2Adapters(
-  rootMoisturePct: number,
-  slopeDeg: number,
-  elevationM: number,
-  ndviEstimate: number,
-  bareMonthsCount: number
+  _rootMoisturePct: number,
+  _slopeDeg: number,
+  _elevationM: number,
+  _ndviEstimate: number | null,
+  _bareMonthsCount: number,
+  gee?: EarthEnginePayload | null
 ): Phase2SatelliteLayer[] {
-  const slopeLabel =
-    slopeDeg <= 3 ? 'Low Erosion Slope' : slopeDeg <= 7 ? 'Gentle Runoff Slope' : 'Steep Erosion Slope';
-  const smapVal = Number((rootMoisturePct / 100 * 0.44).toFixed(2));
-
+  const ndvi = geeMonthlyValues(gee?.ndvi_clim);
+  const smap = geeMonthlyValues(gee?.smap_clim, 100);
+  const validNdvi = ndvi.filter((value): value is number => value !== null);
+  const validSmap = smap.filter((value): value is number => value !== null);
+  const meanNdvi = validNdvi.length
+    ? validNdvi.reduce((sum, value) => sum + value, 0) / validNdvi.length
+    : null;
+  const meanSmap = validSmap.length
+    ? validSmap.reduce((sum, value) => sum + value, 0) / validSmap.length
+    : null;
+  const hasSrtm = isValidVal(gee?.slope_deg) && isValidVal(gee?.elevation_m);
   return [
     {
       id: 'smap',
@@ -143,15 +181,12 @@ export function buildPhase2Adapters(
       shortName: 'SMAP L4 (0–100 cm)',
       assetId: 'NASA/SMAP/SPL4SMGP/008',
       resolution: '9 km native (11 km EE) / 3-hourly · Since 2015-03-31',
-      status: 'Ready',
+      status: meanSmap === null ? 'Unavailable' : 'Ready',
       metricLabel: 'SMAP Root Moisture (sm_rootzone)',
-      metricValue: `${smapVal} m³/m³ (${rootMoisturePct}%)`,
-      plainSummary:
-        rootMoisturePct <= 30
-          ? 'Dry root zone (Red risk ≤0.30) — replaces POWER wetness in Earth Engine mode.'
-          : rootMoisturePct <= 45
-            ? 'Moderate root moisture (Yellow watch ≤0.45) — drip & mulch help.'
-            : 'Healthy root-zone moisture supporting strong crop germination.',
+      metricValue: meanSmap === null ? 'Unavailable' : `${meanSmap.toFixed(1)}% mean root-zone wetness`,
+      plainSummary: meanSmap === null
+        ? 'Earth Engine SMAP observations are unavailable; check backend Earth Engine authentication.'
+        : `SMAP L4 reports a 5-year monthly mean root-zone wetness of ${meanSmap.toFixed(1)}%.`,
       limitation: 'Modelled L4 product, coarse 9–11 km grid; model-only during 2019 & 2022 outages.',
     },
     {
@@ -160,13 +195,12 @@ export function buildPhase2Adapters(
       shortName: 'MODIS MOD13Q1 NDVI',
       assetId: 'MODIS/061/MOD13Q1',
       resolution: '250 m / 16-day composite · Since 2000-02-18',
-      status: 'Ready',
+      status: meanNdvi === null ? 'Unavailable' : 'Ready',
       metricLabel: 'Bare-Field Months (NDVI ≤ 0.35)',
-      metricValue: `${bareMonthsCount} mo/yr · NDVI ${ndviEstimate.toFixed(2)}`,
-      plainSummary:
-        bareMonthsCount >= 4
-          ? 'Several bare-field months detected — adding a cover crop cuts topsoil loss.'
-          : 'Good seasonal green cover across most of the year.',
+      metricValue: meanNdvi === null ? 'Unavailable' : `Mean NDVI ${meanNdvi.toFixed(2)}`,
+      plainSummary: meanNdvi === null
+        ? 'MODIS NDVI is unavailable; check backend Earth Engine authentication.'
+        : `MODIS 16-day composites show a 5-year monthly mean NDVI of ${meanNdvi.toFixed(2)}.`,
       limitation: '250 m pixels can mix neighboring fields; NDVI shows greenness, not crop type.',
     },
     {
@@ -175,13 +209,14 @@ export function buildPhase2Adapters(
       shortName: 'SRTM 30m Slope',
       assetId: 'USGS/SRTMGL1_003',
       resolution: '30 m / static (Feb 2000 mission)',
-      status: 'Ready',
+      status: hasSrtm ? 'Ready' : 'Unavailable',
       metricLabel: 'Terrain Slope (ee.Terrain.slope)',
-      metricValue: `${slopeDeg}° (${slopeLabel})`,
-      plainSummary:
-        slopeDeg <= 3
-          ? `Flat ${elevationM}m terrain — low water runoff multiplier.`
-          : `Slope (${slopeDeg}°) increases erosion multiplier — keep living roots on soil.`,
+      metricValue: hasSrtm
+        ? `${gee!.slope_deg!.toFixed(1)}° slope · ${gee!.elevation_m!.toFixed(0)} m elevation`
+        : 'Unavailable',
+      plainSummary: hasSrtm
+        ? 'Slope and elevation are sampled from the SRTM 30 m digital elevation model.'
+        : 'SRTM is unavailable; check backend Earth Engine authentication.',
       limitation: 'Feb 2000 surface snapshot (includes trees/buildings); 1 km avg can hide local slope.',
     },
   ];
@@ -191,13 +226,15 @@ function buildRiskCalendarFromStats(
   monthly: NasaPowerMonthlyPoint[],
   frostDaysPerMonth: number[],
   heavyRainDaysPerMonth: number[],
-  lat: number
+  _lat: number,
+  ndviMonthly?: (number | null)[],
+  smapMonthlyPct?: (number | null)[]
 ): MonthlyRiskCalendarRow[] {
   return monthly.map((m, idx) => {
     const frostD = Number((frostDaysPerMonth[idx] ?? 0).toFixed(2));
     const heavyD = Number((heavyRainDaysPerMonth[idx] ?? 0).toFixed(2));
-    const wet01 = Number((m.rootWetnessPct / 100).toFixed(2));
-    const ndvi = estimateMonthlyNdvi(idx, wet01, lat);
+    const wetPct = smapMonthlyPct?.[idx] ?? m.rootWetnessPct;
+    const wet01 = Number((wetPct / 100).toFixed(2));
     return {
       month: m.month,
       frostDaysPerYr: frostD,
@@ -206,8 +243,8 @@ function buildRiskCalendarFromStats(
       heavyRainLevel: classifyHeavyRainRisk(heavyD),
       soilWetness: wet01,
       drySoilLevel: classifyDrySoilRisk(wet01),
-      ndvi,
-      bareFieldLevel: classifyBareFieldRisk(ndvi),
+      ndvi: ndviMonthly?.[idx] ?? null,
+      bareFieldLevel: ndviMonthly?.[idx] == null ? 'none' : classifyBareFieldRisk(ndviMonthly[idx]!),
     };
   });
 }
@@ -239,7 +276,7 @@ export function buildFallbackNasaPower(
   const topMoisturePct = Math.max(15, Math.min(86, rootMoisturePct - 4));
   const humidityPct = isTropical ? 79 : isArid ? 48 : 66;
   const solarMj = Number((isArid ? 20.4 : isTropical ? 18.8 : 15.9).toFixed(1));
-  const elevationM = Math.round(45 + Math.abs(Math.sin(coords.lat * 4.1) * 280));
+  const elevationM = 0;
 
   const rainWeights =
     coords.lat < 0
@@ -262,6 +299,7 @@ export function buildFallbackNasaPower(
       minTempC: tMinMonth,
       rainMmMonth: rainMonth,
       rootWetnessPct: wetMonth,
+      topWetnessPct: Math.max(15, wetMonth - 4),
       solarMj: Number(Math.max(5.5, solarMj + seasonalSwing * 5.2).toFixed(1)),
       humidityPct: Math.max(25, Math.min(92, Math.round(humidityPct - seasonalSwing * 9))),
     };
@@ -280,33 +318,16 @@ export function buildFallbackNasaPower(
     heavyPerMonth,
     coords.lat
   );
-  const bareMonthsCount = riskCalendarMonthly.filter((r) => r.bareFieldLevel !== 'green').length;
-  const ndviEstimate = Number(
-    (
-      riskCalendarMonthly.reduce((s, r) => s + r.ndvi, 0) / Math.max(1, riskCalendarMonthly.length)
-    ).toFixed(2)
-  );
+  const bareMonthsCount = 0;
+  const ndviEstimate = null;
   const frostDaysPerYear = Number(frostPerMonth.reduce((a, b) => a + b, 0).toFixed(1));
   const heavyRainDaysPerYear = Number(heavyPerMonth.reduce((a, b) => a + b, 0).toFixed(1));
   const minTempC = Math.min(...monthly.map((m) => m.minTempC));
   const driestYearMm = Math.round(annualRainMm * 0.68);
   const autumnRainOnset = coords.lat < 0 ? 'Mar 19' : isArid ? 'Oct 14' : 'Sep 24';
 
-  const recentRain14dMm = Math.round((annualRainMm / 26) * 0.9);
-  const daily: NasaPowerDailyPoint[] = Array.from({ length: 14 }, (_, i) => {
-    const dayNum = i + 1;
-    const isRainDay = i === 3 || i === 9;
-    return {
-      date: `2025-12-${String(dayNum).padStart(2, '0')}`,
-      label: `Dec ${String(dayNum).padStart(2, '0')}`,
-      tempC: Number((avgTempC - 2.5 + Math.sin(i * 0.7) * 2.1).toFixed(1)),
-      rainMm: isRainDay ? Number((recentRain14dMm / 2).toFixed(1)) : 0,
-      solarMj: Number((solarMj * 0.78 + Math.cos(i) * 1.4).toFixed(1)),
-      humidityPct: Math.min(92, Math.max(25, Math.round(humidityPct + (isRainDay ? 11 : -3)))),
-      rootWetnessPct: Math.min(92, Math.max(16, Math.round(rootMoisturePct + (isRainDay ? 4 : -1)))),
-      topWetnessPct: Math.min(92, Math.max(14, Math.round(topMoisturePct + (isRainDay ? 7 : -2)))),
-    };
-  });
+  const recentRain14dMm = null;
+  const daily: NasaPowerDailyPoint[] = [];
 
   const moisture = classifyMoisture(rootMoisturePct);
   const waterStressScore = Math.max(8, Math.min(92, Math.round(100 - rootMoisturePct * 1.15)));
@@ -314,7 +335,10 @@ export function buildFallbackNasaPower(
   return {
     source: 'nasa-power-fallback',
     fetchedAt: new Date().toISOString(),
+    satelliteCheckedAt: new Date().toISOString(),
     yearsAnalyzed: 'Calibrated 5-year baseline (offline)',
+    dailyDataThrough: '',
+    recentDaysAvailable: 0,
     elevationM,
     avgTempC,
     minTempC,
@@ -330,10 +354,12 @@ export function buildFallbackNasaPower(
     humidityPct,
     solarMj,
     ndviEstimate,
+    monthlySmapRootWetnessPct: Array(12).fill(null),
+    srtmSlopeDeg: null,
     waterStressScore,
     moistureStatus: moisture.status,
     moisturePlainText: moisture.plainText,
-    weatherPlainText: classifyWeather(avgTempC, recentRain14dMm),
+    weatherPlainText: 'Recent observations unavailable while NASA POWER is offline.',
     daily,
     monthly,
     riskCalendarMonthly,
@@ -348,10 +374,9 @@ export function buildFallbackNasaPower(
 }
 
 /**
- * LIVE NASA POWER API Client (Phase 1 Always-On Backend Equivalent):
- * Calls BOTH:
- * 1) Climatology point (T2M, T2M_MIN, PRECTOTCORR, ALLSKY_SFC_SW_DWN, RH2M, GWETROOT, GWETTOP)
- * 2) 5 complete years of Daily point (2021-01-01 to 2025-12-31) for exact backend indicators:
+ * Loads normalized display fields from the backend's NASA POWER proxy:
+ * 1) Climatology (T2M, T2M_MIN, PRECTOTCORR, ALLSKY_SFC_SW_DWN, RH2M, GWETROOT, GWETTOP)
+ * 2) Complete historical years plus near-real-time daily observations:
  *    - Annual rain & Driest year
  *    - Heavy-rain days/yr (PRECTOTCORR >= 20 mm) per month
  *    - Frost days/yr (T2M_MIN < 0 C) per month
@@ -366,74 +391,77 @@ export async function fetchLiveNasaPower(
   const lat = Number(coords.lat.toFixed(4));
   const lon = Number(coords.lng.toFixed(4));
 
-  const climParams = 'T2M,T2M_MIN,PRECTOTCORR,ALLSKY_SFC_SW_DWN,RH2M,GWETROOT,GWETTOP';
-  const dailyParams = 'PRECTOTCORR,T2M_MIN,GWETROOT';
-
-  const climUrl = `https://power.larc.nasa.gov/api/temporal/climatology/point?parameters=${climParams}&community=AG&longitude=${lon}&latitude=${lat}&format=JSON`;
-  // 5 complete years (2021–2025) matching backend "last N complete years"
-  const daily5YrUrl = `https://power.larc.nasa.gov/api/temporal/daily/point?parameters=${dailyParams}&community=AG&longitude=${lon}&latitude=${lat}&start=20210101&end=20251231&format=JSON`;
+  const proxyUrl = new URL(NASA_PROXY_URL);
+  proxyUrl.searchParams.set('lat', String(lat));
+  proxyUrl.searchParams.set('lon', String(lon));
+  proxyUrl.searchParams.set('years', '5');
+  const satellitePromise = fetchEarthEngineData(lat, lon);
 
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 9000);
-
-    const [climResp, dailyResp] = await Promise.all([
-      fetch(climUrl, { signal: controller.signal }),
-      fetch(daily5YrUrl, { signal: controller.signal }).catch(() => null),
-    ]);
+    const timeout = setTimeout(() => controller.abort(), 150_000);
+    const response = await fetch(proxyUrl, { signal: controller.signal });
     clearTimeout(timeout);
 
-    if (!climResp.ok) {
-      throw new Error(`NASA POWER HTTP ${climResp.status}`);
-    }
+    if (!response.ok) throw new Error(`NASA backend HTTP ${response.status}`);
 
-    const climJson = (await climResp.json()) as {
+    const payload = (await response.json()) as {
+      climatology: {
       geometry?: { coordinates?: number[] };
       properties?: { parameter?: Record<string, Record<string, number>> };
+      };
+      daily: { properties?: { parameter?: Record<string, Record<string, number>> } };
+      period: { complete_years: number[]; daily_end: string };
     };
+    const climJson = payload.climatology;
+    const dailyJson = payload.daily;
 
-    const elevationM = Math.max(0, Math.round(climJson.geometry?.coordinates?.[2] ?? 65));
+    const gee = await satellitePromise;
+    const elevationM = isValidVal(gee?.elevation_m)
+      ? Math.round(gee.elevation_m)
+      : Math.max(0, Math.round(climJson.geometry?.coordinates?.[2] ?? 0));
     const cp = climJson.properties?.parameter ?? {};
 
     const monthly: NasaPowerMonthlyPoint[] = MONTHS_ORDER.map((mKey, idx) => {
-      const t = isValidVal(cp.T2M?.[mKey]) ? cp.T2M[mKey] : 18;
-      const tMin = isValidVal(cp.T2M_MIN?.[mKey]) ? cp.T2M_MIN[mKey] : t - 6;
-      const rainDay = isValidVal(cp.PRECTOTCORR?.[mKey]) ? cp.PRECTOTCORR[mKey] : 1.2;
-      const wet = isValidVal(cp.GWETROOT?.[mKey]) ? cp.GWETROOT[mKey] : 0.48;
-      const sol = isValidVal(cp.ALLSKY_SFC_SW_DWN?.[mKey]) ? cp.ALLSKY_SFC_SW_DWN[mKey] : 17;
-      const rh = isValidVal(cp.RH2M?.[mKey]) ? cp.RH2M[mKey] : 64;
+      const values = [cp.T2M?.[mKey], cp.T2M_MIN?.[mKey], cp.PRECTOTCORR?.[mKey], cp.GWETROOT?.[mKey], cp.GWETTOP?.[mKey], cp.ALLSKY_SFC_SW_DWN?.[mKey], cp.RH2M?.[mKey]];
+      if (!values.every(isValidVal)) throw new Error(`NASA climatology is missing ${mKey} values`);
+      const [t, tMin, rainDay, wet, topWet, sol, rh] = values as number[];
       return {
         month: MONTH_SHORT[idx],
         tempC: Number(t.toFixed(1)),
         minTempC: Number(tMin.toFixed(1)),
         rainMmMonth: Math.round(rainDay * DAYS_IN_MONTH[idx]),
-        rootWetnessPct: Math.round(Math.max(0.05, Math.min(0.98, wet)) * 100),
+        rootWetnessPct: Number((Math.max(0, Math.min(1, wet)) * 100).toFixed(1)),
+        topWetnessPct: Number((Math.max(0, Math.min(1, topWet)) * 100).toFixed(1)),
         solarMj: Number(sol.toFixed(1)),
         humidityPct: Math.round(rh),
       };
     });
 
-    // Defaults derived from climatology if 5-year daily call didn't return
-    let annualRainMm = monthly.reduce((sum, m) => sum + m.rainMmMonth, 0);
-    let driestYear = 2022;
-    let driestYearMm = Math.round(annualRainMm * 0.7);
+    let annualRainMm = 0;
+    let driestYear = payload.period.complete_years[0] ?? 0;
+    let driestYearMm = 0;
     const frostMonthTotals = new Array<number>(12).fill(0);
     const heavyMonthTotals = new Array<number>(12).fill(0);
-    let yearsCount = 5;
-    let autumnRainOnset = 'Oct 02';
+    const completeYears = new Set(payload.period.complete_years.map(String));
+    const yearsCount = completeYears.size;
+    let autumnRainOnset = 'Not available';
     const daily: NasaPowerDailyPoint[] = [];
 
-    if (dailyResp && dailyResp.ok) {
-      const dailyJson = (await dailyResp.json()) as {
-        properties?: { parameter?: Record<string, Record<string, number>> };
-      };
+    {
       const dp = dailyJson.properties?.parameter ?? {};
       const rainMap = dp.PRECTOTCORR ?? {};
+      const tempMap = dp.T2M ?? {};
       const tminMap = dp.T2M_MIN ?? {};
       const wetMap = dp.GWETROOT ?? {};
+      const topWetMap = dp.GWETTOP ?? {};
+      const solarMap = dp.ALLSKY_SFC_SW_DWN ?? {};
+      const humidityMap = dp.RH2M ?? {};
 
       const allDates = Object.keys(rainMap).sort();
       const yearlyTotals: Record<string, number> = {};
+      const validRainDays: Record<string, number> = {};
+      const validMinTempDays: Record<string, number> = {};
       const autumnOnsetDayOfYear: number[] = [];
       const foundOnsetYears = new Set<string>();
 
@@ -444,8 +472,9 @@ export async function fetchLiveNasaPower(
         const rVal = rainMap[dKey];
         const tminVal = tminMap[dKey];
 
-        if (isValidVal(rVal)) {
+        if (isValidVal(rVal) && completeYears.has(yr)) {
           yearlyTotals[yr] = (yearlyTotals[yr] ?? 0) + rVal;
+          validRainDays[yr] = (validRainDays[yr] ?? 0) + 1;
           if (rVal >= 20.0) {
             heavyMonthTotals[mIdx] += 1;
           }
@@ -455,60 +484,64 @@ export async function fetchLiveNasaPower(
             const r1 = rainMap[allDates[i - 1]];
             if (isValidVal(r0) && isValidVal(r1) && r0 + r1 + rVal >= 20.0) {
               foundOnsetYears.add(yr);
-              const dt = new Date(
-                parseInt(yr, 10),
-                mIdx,
-                parseInt(dKey.slice(6, 8), 10)
-              );
-              const sep1 = new Date(parseInt(yr, 10), 8, 1);
+              const dt = new Date(Date.UTC(Number(yr), mIdx, Number(dKey.slice(6, 8))));
+              const sep1 = new Date(Date.UTC(Number(yr), 8, 1));
               const offsetDays = Math.round((dt.getTime() - sep1.getTime()) / 86400000);
               autumnOnsetDayOfYear.push(offsetDays);
             }
           }
         }
 
-        if (isValidVal(tminVal) && tminVal < 0.0) {
+        if (isValidVal(tminVal) && tminVal < 0.0 && completeYears.has(yr)) {
           frostMonthTotals[mIdx] += 1;
+        }
+        if (isValidVal(tminVal) && completeYears.has(yr)) {
+          validMinTempDays[yr] = (validMinTempDays[yr] ?? 0) + 1;
         }
       }
 
-      const yearEntries = Object.entries(yearlyTotals);
-      if (yearEntries.length > 0) {
-        yearsCount = yearEntries.length;
-        annualRainMm = Math.round(
-          yearEntries.reduce((sum, [, total]) => sum + total, 0) / yearsCount
-        );
-        const minEntry = yearEntries.reduce((best, cur) => (cur[1] < best[1] ? cur : best));
-        driestYear = parseInt(minEntry[0], 10);
-        driestYearMm = Math.round(minEntry[1]);
+      const yearEntries = Object.entries(yearlyTotals).filter(([year]) => completeYears.has(year));
+      if (!yearsCount || yearEntries.length !== yearsCount) throw new Error('NASA POWER history is missing a complete year');
+      for (const year of completeYears) {
+        const expectedDays = (Date.UTC(Number(year) + 1, 0, 1) - Date.UTC(Number(year), 0, 1)) / 86400000;
+        if (validRainDays[year] !== expectedDays || validMinTempDays[year] !== expectedDays) {
+          throw new Error(`NASA POWER has incomplete daily coverage for ${year}`);
+        }
       }
+      annualRainMm = Math.round(yearEntries.reduce((sum, [, total]) => sum + total, 0) / yearsCount);
+      const minEntry = yearEntries.reduce((best, cur) => (cur[1] < best[1] ? cur : best));
+      driestYear = parseInt(minEntry[0], 10);
+      driestYearMm = Math.round(minEntry[1]);
 
       if (autumnOnsetDayOfYear.length > 0) {
         autumnOnsetDayOfYear.sort((a, b) => a - b);
         const medianOffset = autumnOnsetDayOfYear[Math.floor(autumnOnsetDayOfYear.length / 2)];
-        const refDate = new Date(2025, 8, 1 + medianOffset);
-        autumnRainOnset = `${MONTH_SHORT[refDate.getMonth()]} ${String(refDate.getDate()).padStart(2, '0')}`;
+        const refDate = new Date(Date.UTC(2023, 8, 1 + medianOffset));
+        autumnRainOnset = `${MONTH_SHORT[refDate.getUTCMonth()]} ${String(refDate.getUTCDate()).padStart(2, '0')}`;
       } else {
-        autumnRainOnset = 'No ≥20mm onset';
+        autumnRainOnset = 'No qualifying 3-day rain event';
       }
 
-      // Latest 14 valid daily points for recent weather context
-      const validRecent = allDates.filter((d) => isValidVal(rainMap[d])).slice(-14);
+      // Keep only actual observations in the recent rolling 14-day window.
+      const dailyEnd = new Date(`${payload.period.daily_end}T00:00:00Z`);
+      const recentStart = new Date(dailyEnd.getTime() - 13 * 86400000);
+      const validRecent = allDates.filter((d) => {
+        const day = new Date(`${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}T00:00:00Z`);
+        return day >= recentStart && day <= dailyEnd &&
+          [rainMap[d], tempMap[d], tminMap[d], wetMap[d], topWetMap[d], humidityMap[d]].some(isValidVal);
+      });
       for (const dKey of validRecent) {
         const { iso, label } = formatIsoDate(dKey);
-        const mIdx = Math.max(0, Math.min(11, parseInt(dKey.slice(4, 6), 10) - 1));
-        const r = isValidVal(rainMap[dKey]) ? rainMap[dKey] : 0;
-        const w = isValidVal(wetMap[dKey]) ? Math.round(wetMap[dKey] * 100) : monthly[mIdx].rootWetnessPct;
-        const tmin = isValidVal(tminMap[dKey]) ? tminMap[dKey] : monthly[mIdx].minTempC;
         daily.push({
           date: iso,
           label,
-          tempC: Number((tmin + 6).toFixed(1)),
-          rainMm: Number(r.toFixed(1)),
-          solarMj: monthly[mIdx].solarMj,
-          humidityPct: monthly[mIdx].humidityPct,
-          rootWetnessPct: Math.max(8, Math.min(98, w)),
-          topWetnessPct: Math.max(6, Math.min(98, w - 3)),
+          tempC: isValidVal(tempMap[dKey]) ? Number(tempMap[dKey].toFixed(1)) : null,
+          minTempC: isValidVal(tminMap[dKey]) ? Number(tminMap[dKey].toFixed(1)) : null,
+          rainMm: isValidVal(rainMap[dKey]) ? Number(rainMap[dKey].toFixed(1)) : null,
+          solarMj: isValidVal(solarMap[dKey]) ? Number(solarMap[dKey].toFixed(1)) : null,
+          humidityPct: isValidVal(humidityMap[dKey]) ? Number(humidityMap[dKey].toFixed(1)) : null,
+          rootWetnessPct: isValidVal(wetMap[dKey]) ? Number((Math.max(0, Math.min(1, wetMap[dKey])) * 100).toFixed(1)) : null,
+          topWetnessPct: isValidVal(topWetMap[dKey]) ? Number((Math.max(0, Math.min(1, topWetMap[dKey])) * 100).toFixed(1)) : null,
         });
       }
     }
@@ -516,18 +549,21 @@ export async function fetchLiveNasaPower(
     const frostDaysPerMonth = frostMonthTotals.map((c) => c / yearsCount);
     const heavyRainDaysPerMonth = heavyMonthTotals.map((c) => c / yearsCount);
 
+    const ndviMonthly = geeMonthlyValues(gee?.ndvi_clim);
+    const monthlySmapRootWetnessPct = geeMonthlyValues(gee?.smap_clim, 100);
+    const validNdvi = ndviMonthly.filter((value): value is number => value !== null);
+    const ndviEstimate = validNdvi.length
+      ? Number((validNdvi.reduce((sum, value) => sum + value, 0) / validNdvi.length).toFixed(2))
+      : null;
     const riskCalendarMonthly = buildRiskCalendarFromStats(
       monthly,
       frostDaysPerMonth,
       heavyRainDaysPerMonth,
-      lat
+      lat,
+      ndviMonthly,
+      monthlySmapRootWetnessPct
     );
-    const bareMonthsCount = riskCalendarMonthly.filter((r) => r.bareFieldLevel !== 'green').length;
-    const ndviEstimate = Number(
-      (
-        riskCalendarMonthly.reduce((s, r) => s + r.ndvi, 0) / Math.max(1, riskCalendarMonthly.length)
-      ).toFixed(2)
-    );
+    const bareMonthsCount = riskCalendarMonthly.filter((row) => row.bareFieldLevel !== 'none' && row.bareFieldLevel !== 'green').length;
 
     const avgTempC = Number(
       (isValidVal(cp.T2M?.ANN) ? cp.T2M.ANN : monthly.reduce((s, m) => s + m.tempC, 0) / 12).toFixed(
@@ -548,16 +584,18 @@ export async function fetchLiveNasaPower(
       ).toFixed(1)
     );
 
-    const rootMoisturePct =
-      daily.length > 0
-        ? Math.round(daily.reduce((s, d) => s + d.rootWetnessPct, 0) / daily.length)
-        : Math.round((isValidVal(cp.GWETROOT?.ANN) ? cp.GWETROOT.ANN : 0.48) * 100);
+    const recentRootWetness = daily.flatMap((day) => day.rootWetnessPct === null ? [] : [day.rootWetnessPct]);
+    const rootMoisturePct = recentRootWetness.length
+      ? Math.round(recentRootWetness.reduce((sum, value) => sum + value, 0) / recentRootWetness.length)
+      : Math.round((isValidVal(cp.GWETROOT?.ANN) ? cp.GWETROOT.ANN : 0.48) * 100);
     const topMoisturePct = Math.round(
-      (isValidVal(cp.GWETTOP?.ANN) ? cp.GWETTOP.ANN : rootMoisturePct / 100) * 100
+      100 * (isValidVal(cp.GWETTOP?.ANN)
+        ? cp.GWETTOP.ANN
+        : MONTHS_ORDER.reduce((sum, month) => sum + cp.GWETTOP[month], 0) / 12)
     );
-    const recentRain14dMm = Number(
-      daily.reduce((sum, d) => sum + d.rainMm, 0).toFixed(1)
-    );
+    const recentRain14dMm = daily.length === 14 && daily.every((day) => day.rainMm !== null)
+      ? Number(daily.reduce((sum, d) => sum + (d.rainMm ?? 0), 0).toFixed(1))
+      : null;
 
     const frostDaysPerYear = Number(
       frostDaysPerMonth.reduce((sum, v) => sum + v, 0).toFixed(1)
@@ -572,7 +610,10 @@ export async function fetchLiveNasaPower(
     return {
       source: 'nasa-power-live',
       fetchedAt: new Date().toISOString(),
-      yearsAnalyzed: `2021–2025 (${yearsCount} complete years)`,
+      satelliteCheckedAt: new Date().toISOString(),
+      yearsAnalyzed: `${payload.period.complete_years[0]}–${payload.period.complete_years[yearsCount - 1]} (${yearsCount} complete years)`,
+      dailyDataThrough: daily.length ? daily[daily.length - 1].date : '',
+      recentDaysAvailable: daily.length,
       elevationM,
       avgTempC,
       minTempC,
@@ -588,22 +629,24 @@ export async function fetchLiveNasaPower(
       humidityPct: avgHumidity,
       solarMj: avgSolar,
       ndviEstimate,
+      monthlySmapRootWetnessPct,
+      srtmSlopeDeg: isValidVal(gee?.slope_deg) ? Number(gee.slope_deg.toFixed(1)) : null,
       waterStressScore,
       moistureStatus: moisture.status,
       moisturePlainText: moisture.plainText,
-      weatherPlainText: classifyWeather(avgTempC, recentRain14dMm),
-      daily:
-        daily.length > 0
-          ? daily
-          : buildFallbackNasaPower(coords, soilType, slopeDeg).daily,
+      weatherPlainText: recentRain14dMm === null
+        ? 'Recent 14-day NASA observations are incomplete.'
+        : classifyWeather(avgTempC, recentRain14dMm),
+      daily,
       monthly,
       riskCalendarMonthly,
       phase2Adapters: buildPhase2Adapters(
         rootMoisturePct,
-        slopeDeg,
+        isValidVal(gee?.slope_deg) ? gee.slope_deg : slopeDeg,
         elevationM,
         ndviEstimate,
-        bareMonthsCount
+        bareMonthsCount,
+        gee
       ),
     };
   } catch {

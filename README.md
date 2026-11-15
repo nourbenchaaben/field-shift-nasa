@@ -4,7 +4,7 @@ The original Streamlit prototype is archived in [legacy_prototype/](./legacy_pro
 
 - `backend/data`: NASA POWER, optional Earth Engine clients, and the SQLite crop catalog.
 - `backend/engine`: crop catalog defaults, scoring, agronomic indicators, and scenarios.
-- `backend/main.py`: FastAPI contract (`GET /api/health`, `GET /api/crops`, `POST /api/analyze`).
+- `backend/main.py`: FastAPI endpoints (`GET /api/health`, `GET /api/crops`, `GET /api/nasa/power`, `POST /api/analyze`).
 - `frontend`: Vite React dashboard.
 - `shared/contract.json`: shared request/response contract.
 
@@ -18,6 +18,12 @@ The backend initializes `data/tadawol.sqlite3` on startup and seeds the crop
 catalog from `backend/engine/crops.py`. The database stores water use, baseline
 yield, market value, nitrogen fixation, forage value, and seasonal cover
 metadata. `GET /api/crops` reads from this catalog.
+
+The dashboard loads NASA POWER climatology and rolling daily observations through
+the backend `GET /api/nasa/power` proxy. This keeps browser requests on one backend
+data path and lets the dashboard display the observation date and unavailable data
+explicitly. Optional SMAP, MODIS NDVI, and SRTM layers require authenticated Earth
+Engine access and are labeled unavailable until that integration returns real data.
 
 `POST /api/analyze` validates farmer priority weights and crop names, applies
 the selected climate scenario and NASA/Earth Engine indicators, scores the
@@ -46,28 +52,32 @@ from NASA POWER and its `reference_et_mm` values come from Meteomatics.
 Missing credentials or unavailable Meteomatics parameters are reported in
 `meteomatics.error`; the NASA response still succeeds.
 
-Earth Engine is preferred automatically. Install the backend requirements, run
-`earthengine authenticate`, and set `$env:GEE_PROJECT` to a Google Cloud project
-with Earth Engine enabled. The frontend no longer asks the user to select a
+Earth Engine is preferred automatically for satellite layers. Install the backend
+requirements, run `earthengine authenticate`, and set `GEE_PROJECT` in the
+project-root `.env` file to a Google Cloud project with Earth Engine enabled
+(or set `$env:GEE_PROJECT` in the same PowerShell session before starting the
+backend). A Groq/LLM API key is not an Earth Engine credential. The frontend no longer asks the user to select a
 source: the backend tries Earth Engine first and falls back to NASA POWER if
 Earth Engine is unavailable. The response reports the actual source and
 `confidence.fallback_reason` when fallback occurs. With `slope_deg: null`, SRTM
 supplies the automatic slope; a numeric `slope_deg` remains a manual override.
-SMAP supplies water wetness and MODIS supplies NDVI/bare-field risk.
+SMAP supplies water wetness and MODIS supplies NDVI/bare-field risk. The
+dashboard loads these through `GET /api/nasa/satellites`; its cache is stored
+inside the repository so launching Uvicorn from a different working directory
+does not disable cached observations. After changing `.env`, restart Uvicorn.
 
-The backend also exposes `POST /api/advisor/chat` using Groq through its
-OpenAI-compatible API. If Groq is unavailable or `OPENAI_API_KEY` is missing,
-the endpoint returns HTTP 503 rather than using another AI provider or a
-simulated AI response.
-Secrets must remain in backend environment variables and must never be placed
-in the React application.
+The backend also exposes `POST /api/advisor/chat` through Groq's OpenAI-compatible
+chat completions API. For local development, configure the key in the project-root
+`.env` file. The endpoint returns HTTP 503 if the key is missing or the provider
+cannot answer. Keep secrets out of source control and the React application.
 
 ```powershell
-Remove-Item Env:GITHUB_TOKEN -ErrorAction SilentlyContinue
-$env:OPENAI_API_KEY = "gsk_your_groq_key_here"
-$env:OPENAI_BASE_URL = "https://api.groq.com/openai/v1"
-$env:OPENAI_MODEL = "llama-3.3-70b-versatile"
+python -m pip install -r backend/requirements.txt
+python -m uvicorn backend.main:app --reload --port 8000
 ```
+
+Set `LLM_API_KEY`, `LLM_BASE_URL`, and `ADVISOR_MODEL` in `.env`. The `.env`
+file is ignored by Git. Use a Groq API key and never commit or share it.
 
 The advisor receives only a bounded farm context, the computed active rotation,
 and selected NASA indicators. It explains backend results but does not replace

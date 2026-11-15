@@ -1,7 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { useFarm } from '../context/FarmContext';
 import { CalendarEvent } from '../types/farm';
-import { RiskCalendarMatrix } from '../components/RiskCalendarMatrix';
 import {
   AlertTriangle,
   CalendarDays,
@@ -95,7 +94,6 @@ export const CalendarPage: React.FC = () => {
     toggleCalendarComplete,
     addCalendarEvent,
     activeStrategy,
-    setIsDataSourcesOpen,
   } = useFarm();
 
   const [scale, setScale] = useState<CalendarScale>('months');
@@ -203,16 +201,16 @@ export const CalendarPage: React.FC = () => {
     <div className="space-y-6 animate-fade-in">
       {/* Header & Controls */}
       <div className="flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <span className="text-[11px] font-bold uppercase tracking-widest text-[#00873A]">
+        <div className="space-y-1">
+          <span className="text-xs font-extrabold uppercase tracking-widest text-[#007432]">
             Multi-Year Planting &amp; Harvest Schedule
           </span>
-          <h2 className="text-xl sm:text-2xl font-extrabold text-[#111111]">
+          <h2 className="text-2xl sm:text-[1.75rem] font-extrabold text-[#111111]">
             Farm Calendar &amp; Seasonal Roadmap
           </h2>
-          <p className="text-xs sm:text-sm text-[#6F6F6F]">
-            Synced with <strong>{activeStrategy.title}</strong> — includes past harvests, active
-            checks, and Bare-Field Clock cover alerts.
+          <p className="text-xs sm:text-sm text-[#3A3A3A]">
+            Synced with <strong className="text-[#111111]">{activeStrategy.title}</strong>,
+            including past harvests, active field checks, and Bare-Field Clock cover alerts.
           </p>
         </div>
 
@@ -227,8 +225,8 @@ export const CalendarPage: React.FC = () => {
       </div>
 
       {/* Time Scale Switcher (Days / Months / Seasons / Years) + Multi-Year Navigator */}
-      <div className="surface-card p-4 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-        <div className="inline-flex flex-wrap items-center bg-[#F5F4F0] p-1 rounded-full border border-[#DFDDD6] self-start">
+      <div className="surface-card p-4 sm:p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+        <div className="inline-flex flex-wrap items-center bg-[#EFECE4] p-1 rounded-full border border-[#D9D5CB] self-start">
           {(
             [
               { id: 'days', label: 'Days' },
@@ -243,8 +241,8 @@ export const CalendarPage: React.FC = () => {
               onClick={() => setScale(tab.id)}
               className={`px-4 py-1.5 rounded-full text-xs font-extrabold transition cursor-pointer ${
                 scale === tab.id
-                  ? 'bg-[#00873A] text-white'
-                  : 'text-[#474747] hover:text-[#111111]'
+                  ? 'bg-[#007432] text-white shadow-xs'
+                  : 'text-[#2E2E2E] hover:text-[#111111]'
               }`}
             >
               {tab.label}
@@ -257,7 +255,7 @@ export const CalendarPage: React.FC = () => {
             type="button"
             onClick={handlePrev}
             aria-label="Previous period"
-            className="w-9 h-9 rounded-full border border-[#D9D9D9] bg-white hover:bg-[#111111] hover:text-white flex items-center justify-center transition cursor-pointer"
+            className="w-9 h-9 rounded-full border border-[#CFCBC2] bg-white hover:bg-[#111111] hover:text-white flex items-center justify-center transition cursor-pointer"
           >
             <ChevronLeft className="w-4 h-4" />
           </button>
@@ -274,7 +272,7 @@ export const CalendarPage: React.FC = () => {
             type="button"
             onClick={handleNext}
             aria-label="Next period"
-            className="w-9 h-9 rounded-full border border-[#D9D9D9] bg-white hover:bg-[#111111] hover:text-white flex items-center justify-center transition cursor-pointer"
+            className="w-9 h-9 rounded-full border border-[#CFCBC2] bg-white hover:bg-[#111111] hover:text-white flex items-center justify-center transition cursor-pointer"
           >
             <ChevronRight className="w-4 h-4" />
           </button>
@@ -282,7 +280,7 @@ export const CalendarPage: React.FC = () => {
           <button
             type="button"
             onClick={jumpToday}
-            className="px-3.5 py-1.5 rounded-full bg-[#F5F4F0] hover:bg-[#EBB40E] border border-[#D9D9D9] text-xs font-bold text-[#111111] transition cursor-pointer"
+            className="px-3.5 py-1.5 rounded-full bg-[#F5F4F0] hover:bg-[#EBB40E] border border-[#CFCBC2] text-xs font-extrabold text-[#111111] transition cursor-pointer"
           >
             Today
           </button>
@@ -291,20 +289,29 @@ export const CalendarPage: React.FC = () => {
         <div className="flex flex-wrap gap-1.5">
           {(
             [
-              { id: 'all', label: 'All' },
-              { id: 'past', label: 'Past History' },
-              { id: 'current', label: 'Current' },
-              { id: 'future', label: 'Future Plan' },
+              { id: 'all', label: `All (${calendarEvents.length})` },
+              {
+                id: 'past',
+                label: `Past (${calendarEvents.filter((e) => e.phase === 'past').length})`,
+              },
+              {
+                id: 'current',
+                label: `Current (${calendarEvents.filter((e) => e.phase === 'current').length})`,
+              },
+              {
+                id: 'future',
+                label: `Future (${calendarEvents.filter((e) => e.phase === 'future').length})`,
+              },
             ] as const
           ).map((f) => (
             <button
               key={f.id}
               type="button"
               onClick={() => setPhaseFilter(f.id)}
-              className={`px-3 py-1 rounded-full text-[11px] font-bold border transition cursor-pointer ${
+              className={`px-3 py-1.5 rounded-full text-xs font-bold border transition cursor-pointer ${
                 phaseFilter === f.id
                   ? 'bg-[#111111] text-white border-[#111111]'
-                  : 'bg-white text-[#474747] border-[#D9D9D9] hover:border-[#111111]'
+                  : 'bg-white text-[#2E2E2E] border-[#CFCBC2] hover:border-[#111111]'
               }`}
             >
               {f.label}
@@ -315,12 +322,12 @@ export const CalendarPage: React.FC = () => {
 
       {/* VIEW 1: DAYS */}
       {scale === 'days' && (
-        <div className="surface-card p-5 space-y-4">
+        <div className="surface-card p-5 sm:p-6 space-y-4">
           <div className="flex items-center justify-between">
-            <h3 className="text-base font-extrabold text-[#111111]">
-              Daily Schedule — {MONTH_NAMES[focusMonth]} {focusYear}
+            <h3 className="text-lg font-extrabold text-[#111111]">
+              Daily Schedule: {MONTH_NAMES[focusMonth]} {focusYear}
             </h3>
-            <span className="text-xs font-semibold text-[#6F6F6F]">
+            <span className="text-xs font-bold text-[#3A3A3A]">
               {eventsInFocusMonth.length} scheduled{' '}
               {eventsInFocusMonth.length === 1 ? 'task' : 'tasks'}
             </span>
@@ -328,11 +335,11 @@ export const CalendarPage: React.FC = () => {
 
           {eventsInFocusMonth.length === 0 ? (
             <div className="p-8 text-center rounded-2xl bg-[#F5F4F0] space-y-2">
-              <CalendarDays className="w-8 h-8 text-[#00873A] mx-auto" />
-              <div className="text-sm font-bold text-[#111111]">
+              <CalendarDays className="w-8 h-8 text-[#007432] mx-auto" />
+              <div className="text-sm font-extrabold text-[#111111]">
                 Quiet month in {MONTH_NAMES[focusMonth]} {focusYear}
               </div>
-              <p className="text-xs text-[#6F6F6F]">
+              <p className="text-xs sm:text-sm text-[#3A3A3A]">
                 Use the arrows above to browse other months, switch to Seasons/Years view, or add a
                 custom farm task.
               </p>
@@ -356,7 +363,7 @@ export const CalendarPage: React.FC = () => {
                         {ev.completed ? (
                           <CheckCircle2 className="w-5 h-5" />
                         ) : (
-                          <Circle className="w-5 h-5 text-[#979797]" />
+                          <Circle className="w-5 h-5 text-[#555555]" />
                         )}
                       </button>
                       <div>
@@ -365,19 +372,19 @@ export const CalendarPage: React.FC = () => {
                             {ev.date}
                           </span>
                           <span
-                            className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${st.bg} ${st.text}`}
+                            className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${st.bg} ${st.text}`}
                           >
                             {st.label}
                           </span>
                           {ev.cropName && (
-                            <span className="text-[11px] font-semibold text-[#6F6F6F]">
+                            <span className="text-[11px] font-semibold text-[#3A3A3A]">
                               {ev.cropName}
                             </span>
                           )}
                         </div>
                         <div
                           className={`text-sm font-extrabold mt-1 ${
-                            ev.completed ? 'line-through text-[#6F6F6F]' : 'text-[#111111]'
+                            ev.completed ? 'line-through text-[#3A3A3A]' : 'text-[#111111]'
                           }`}
                         >
                           {ev.title}
@@ -396,7 +403,7 @@ export const CalendarPage: React.FC = () => {
       {/* VIEW 2: MONTHS */}
       {scale === 'months' && (
         <div className="surface-card p-5 space-y-4">
-          <div className="grid grid-cols-7 gap-2 text-center text-[11px] font-extrabold uppercase tracking-wider text-[#6F6F6F]">
+          <div className="grid grid-cols-7 gap-2 text-center text-[11px] font-extrabold uppercase tracking-wider text-[#3A3A3A]">
             {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d) => (
               <div key={d}>{d}</div>
             ))}
@@ -429,7 +436,7 @@ export const CalendarPage: React.FC = () => {
                       {cell.day}
                     </span>
                     {isToday && (
-                      <span className="text-[9px] font-extrabold uppercase bg-[#00873A] text-white px-1.5 py-0.5 rounded-full">
+                      <span className="text-[11px] font-extrabold uppercase bg-[#00873A] text-white px-1.5 py-0.5 rounded-full">
                         Today
                       </span>
                     )}
@@ -444,7 +451,7 @@ export const CalendarPage: React.FC = () => {
                           type="button"
                           onClick={() => toggleCalendarComplete(ev.id)}
                           title={`${ev.title}: ${ev.description}`}
-                          className={`w-full text-left px-1.5 py-1 rounded-md text-[10px] font-bold truncate border cursor-pointer ${st.bg} ${st.text} ${st.border} ${
+                          className={`w-full text-left px-1.5 py-1 rounded-md text-[11px] font-bold truncate border cursor-pointer ${st.bg} ${st.text} ${st.border} ${
                             ev.completed ? 'opacity-60 line-through' : ''
                           }`}
                         >
@@ -473,7 +480,7 @@ export const CalendarPage: React.FC = () => {
                     <h3 className="text-base font-extrabold text-[#111111]">
                       {season.label} {focusYear}
                     </h3>
-                    <div className="text-xs text-[#6F6F6F]">{season.badge}</div>
+                    <div className="text-xs text-[#3A3A3A]">{season.badge}</div>
                   </div>
                   <span className="px-2.5 py-1 rounded-full bg-[#F5F4F0] text-xs font-bold text-[#00873A]">
                     {seasonEvents.length} {seasonEvents.length === 1 ? 'task' : 'tasks'}
@@ -481,7 +488,7 @@ export const CalendarPage: React.FC = () => {
                 </div>
 
                 {seasonEvents.length === 0 ? (
-                  <p className="text-xs text-[#6F6F6F] py-3">
+                  <p className="text-xs text-[#3A3A3A] py-3">
                     No tasks scheduled for {season.label} {focusYear}. Keep ground covered to
                     protect moisture.
                   </p>
@@ -502,11 +509,11 @@ export const CalendarPage: React.FC = () => {
                             {ev.completed ? (
                               <CheckCircle2 className="w-4 h-4" />
                             ) : (
-                              <Circle className="w-4 h-4 text-[#6F6F6F]" />
+                              <Circle className="w-4 h-4 text-[#3A3A3A]" />
                             )}
                           </button>
                           <div className="min-w-0">
-                            <div className="flex flex-wrap items-center gap-1.5 text-[10px] font-bold">
+                            <div className="flex flex-wrap items-center gap-1.5 text-[11px] font-bold">
                               <span className="font-mono-tech text-[#111111]">{ev.date}</span>
                               <span className={`px-2 py-0.5 rounded-full ${st.bg} ${st.text}`}>
                                 {st.label}
@@ -545,7 +552,7 @@ export const CalendarPage: React.FC = () => {
                   <div className="flex items-center gap-2">
                     <span className="text-xl font-extrabold text-[#111111]">{yr}</span>
                     {isCurrentYr && (
-                      <span className="px-2.5 py-0.5 rounded-full bg-[#EBB40E] text-[#111111] text-[10px] font-extrabold">
+                      <span className="px-2.5 py-0.5 rounded-full bg-[#EBB40E] text-[#111111] text-[11px] font-extrabold">
                         Current Year
                       </span>
                     )}
@@ -563,8 +570,8 @@ export const CalendarPage: React.FC = () => {
                 </div>
 
                 {yrEvents.length === 0 ? (
-                  <p className="text-xs text-[#6F6F6F]">
-                    Long-term rotation carryover year — add custom tasks anytime.
+                  <p className="text-xs text-[#3A3A3A]">
+                    Long-term rotation carryover year. Add custom tasks anytime.
                   </p>
                 ) : (
                   <div className="space-y-2">
@@ -579,12 +586,12 @@ export const CalendarPage: React.FC = () => {
                             <div className="text-xs font-extrabold text-[#111111] truncate">
                               {ev.title}
                             </div>
-                            <div className="text-[11px] text-[#6F6F6F] truncate">
+                            <div className="text-[11px] text-[#3A3A3A] truncate">
                               {ev.date} {ev.cropName ? `· ${ev.cropName}` : ''}
                             </div>
                           </div>
                           <span
-                            className={`px-2 py-0.5 rounded-full text-[10px] font-bold shrink-0 ${st.bg} ${st.text}`}
+                            className={`px-2 py-0.5 rounded-full text-[11px] font-bold shrink-0 ${st.bg} ${st.text}`}
                           >
                             {st.label}
                           </span>
@@ -600,19 +607,13 @@ export const CalendarPage: React.FC = () => {
       )}
 
       {/* Full Complete Roadmap Summary */}
-      <RiskCalendarMatrix
-        nasa={profile.nasaPower}
-        countryName={profile.countryName}
-        onOpenDataSources={() => setIsDataSourcesOpen(true)}
-      />
-
       <div className="surface-card p-5 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <h3 className="text-base font-extrabold text-[#111111]">
               Complete Farm Roadmap (Past History → Current → Future Schedule)
             </h3>
-            <p className="text-xs text-[#6F6F6F]">
+            <p className="text-xs text-[#3A3A3A]">
               Click any circle to mark field tasks done as you move through the year.
             </p>
           </div>
@@ -648,7 +649,7 @@ export const CalendarPage: React.FC = () => {
                   {ev.completed ? (
                     <CheckCircle2 className="w-4 h-4" />
                   ) : (
-                    <Circle className="w-4 h-4 text-[#979797]" />
+                    <Circle className="w-4 h-4 text-[#555555]" />
                   )}
                 </button>
                 <div className="min-w-0 space-y-1">
@@ -657,14 +658,14 @@ export const CalendarPage: React.FC = () => {
                       {ev.date}
                     </span>
                     <span
-                      className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${st.bg} ${st.text}`}
+                      className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${st.bg} ${st.text}`}
                     >
                       {st.label}
                     </span>
                   </div>
                   <div
                     className={`text-xs font-extrabold ${
-                      ev.completed ? 'line-through text-[#6F6F6F]' : 'text-[#111111]'
+                      ev.completed ? 'line-through text-[#3A3A3A]' : 'text-[#111111]'
                     }`}
                   >
                     {ev.title}

@@ -1,19 +1,24 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useFarm } from '../context/FarmContext';
+import { ThemeToggleButton } from '../context/ThemeContext';
 import { AppScreen, SlopeOption, SoilType } from '../types/farm';
 import { BrandMark } from './BrandMark';
-import { ContractInspectorModal } from './ContractInspectorModal';
-import { DataSourcesModal } from './DataSourcesModal';
 import { FarmManagerModal } from './FarmManagerModal';
+import {
+  LocationCascadePicker,
+  LocationSelection,
+} from './LocationCascadePicker';
 import { SplitAiChatbot } from './SplitAiChatbot';
+import { FarmFinanceDraft, FarmFinanceFields } from './FarmFinanceFields';
+import { LanguageSelector } from './LanguageSelector';
 import { GLOBAL_COUNTRIES } from '../data/countries';
+import { getDefaultCurrencyForCountry } from '../data/regionalMarketData';
 import { buildDefaultBoundary, scaleBoundaryToHectares } from '../data/agronomyData';
 import {
   Bot,
-  CalendarDays,
   Camera,
   CheckCircle2,
-  Code2,
+  Coins,
   History,
   LayoutDashboard,
   LogOut,
@@ -22,8 +27,6 @@ import {
   Pencil,
   Plus,
   RefreshCw,
-  Satellite,
-  Search,
   Sparkles,
   TrendingUp,
   Upload,
@@ -38,32 +41,32 @@ const NAV_ITEMS: { id: AppScreen; label: string; sub: string; icon: React.ReactN
   {
     id: 'dashboard',
     label: 'Dashboard',
-    sub: 'Live Field & NASA Data',
+    sub: 'Live Field, Calendar & NASA Data',
     icon: <LayoutDashboard className="w-4 h-4" />,
-  },
-  {
-    id: 'calendar',
-    label: 'Calendar',
-    sub: 'Tasks & Season Roadmap',
-    icon: <CalendarDays className="w-4 h-4" />,
-  },
-  {
-    id: 'history',
-    label: 'Farm History',
-    sub: 'Past Years & Harvests',
-    icon: <History className="w-4 h-4" />,
   },
   {
     id: 'rotation-lab',
     label: 'Rotation Lab',
-    sub: 'Top 3 Plans & Simulation',
+    sub: 'AI Decision Tool & Custom Plans',
     icon: <Sparkles className="w-4 h-4" />,
+  },
+  {
+    id: 'market-finance',
+    label: 'Market & Finance',
+    sub: '2026 Prices, Profit & Subsidies',
+    icon: <Coins className="w-4 h-4" />,
   },
   {
     id: 'predictions',
     label: 'Future Prediction',
     sub: '5-Year Soil & Yield',
     icon: <TrendingUp className="w-4 h-4" />,
+  },
+  {
+    id: 'history',
+    label: 'Farm History',
+    sub: 'Strategy Roadmap & Past 5 Years',
+    icon: <History className="w-4 h-4" />,
   },
 ];
 
@@ -99,23 +102,50 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
     toastMessage,
     isChatOpen,
     setIsChatOpen,
-    isDataSourcesOpen,
-    setIsDataSourcesOpen,
-    contractSource,
   } = useFarm();
 
   const [mobileOpen, setMobileOpen] = useState(false);
   const [profileModalOpen, setProfileModalOpen] = useState(false);
-  const [contractModalOpen, setContractModalOpen] = useState(false);
 
   // Profile modal draft state
   const [editName, setEditName] = useState(profile.name);
   const [editFarmName, setEditFarmName] = useState(profile.farmName);
   const [editCountryCode, setEditCountryCode] = useState(profile.countryCode);
-  const [countrySearch, setCountrySearch] = useState('');
+  const [editStateName, setEditStateName] = useState(profile.stateName ?? '');
+  const [editLocalityName, setEditLocalityName] = useState(profile.localityName ?? '');
+  const [editRegionLabel, setEditRegionLabel] = useState(profile.regionLabel);
+  const [editCoords, setEditCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [editSoil, setEditSoil] = useState<SoilType>(profile.soilType);
   const [editSlope, setEditSlope] = useState<SlopeOption>(profile.slopeOption);
   const [editPhoto, setEditPhoto] = useState<string | undefined>(profile.photoDataUrl);
+  const [editFinanceDraft, setEditFinanceDraft] = useState<FarmFinanceDraft>(() => ({
+    enabled: Boolean(profile.financeInputs?.enabled),
+    currencyCode:
+      profile.financeInputs?.currencyCode ??
+      getDefaultCurrencyForCountry(profile.countryCode).code,
+    seasonBudgetCapacity: profile.financeInputs?.seasonBudgetCapacityLocal
+      ? String(profile.financeInputs.seasonBudgetCapacityLocal)
+      : '',
+    operatingCostPerHa: profile.financeInputs?.operatingCostPerHaLocal
+      ? String(profile.financeInputs.operatingCostPerHaLocal)
+      : '',
+    fertilizerCostPerHa:
+      profile.financeInputs?.fertilizerCostPerHaLocal !== undefined
+        ? String(profile.financeInputs.fertilizerCostPerHaLocal)
+        : '',
+    lastSeasonNetProfit:
+      profile.financeInputs?.lastSeasonNetProfitLocal !== undefined
+        ? String(profile.financeInputs.lastSeasonNetProfitLocal)
+        : '',
+    targetAnnualProfit: profile.financeInputs?.targetAnnualProfitLocal
+      ? String(profile.financeInputs.targetAnnualProfitLocal)
+      : '',
+    irrigationEnergyCostPerHa:
+      profile.financeInputs?.irrigationEnergyCostPerHaLocal !== undefined
+        ? String(profile.financeInputs.irrigationEnergyCostPerHaLocal)
+        : '',
+  }));
+  const [profileFinanceError, setProfileFinanceError] = useState<string | null>(null);
   const [savingProfile, setSavingProfile] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -123,23 +153,58 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
     setEditName(profile.name);
     setEditFarmName(profile.farmName);
     setEditCountryCode(profile.countryCode);
-    setCountrySearch('');
+    setEditStateName(profile.stateName ?? '');
+    setEditLocalityName(profile.localityName ?? '');
+    setEditRegionLabel(profile.regionLabel);
+    setEditCoords(null);
     setEditSoil(profile.soilType);
     setEditSlope(profile.slopeOption);
     setEditPhoto(profile.photoDataUrl);
+    setProfileFinanceError(null);
+    setEditFinanceDraft({
+      enabled: Boolean(profile.financeInputs?.enabled),
+      currencyCode:
+        profile.financeInputs?.currencyCode ??
+        getDefaultCurrencyForCountry(profile.countryCode).code,
+      seasonBudgetCapacity: profile.financeInputs?.seasonBudgetCapacityLocal
+        ? String(profile.financeInputs.seasonBudgetCapacityLocal)
+        : '',
+      operatingCostPerHa: profile.financeInputs?.operatingCostPerHaLocal
+        ? String(profile.financeInputs.operatingCostPerHaLocal)
+        : '',
+      fertilizerCostPerHa:
+        profile.financeInputs?.fertilizerCostPerHaLocal !== undefined
+          ? String(profile.financeInputs.fertilizerCostPerHaLocal)
+          : '',
+      lastSeasonNetProfit:
+        profile.financeInputs?.lastSeasonNetProfitLocal !== undefined
+          ? String(profile.financeInputs.lastSeasonNetProfitLocal)
+          : '',
+      targetAnnualProfit: profile.financeInputs?.targetAnnualProfitLocal
+        ? String(profile.financeInputs.targetAnnualProfitLocal)
+        : '',
+      irrigationEnergyCostPerHa:
+        profile.financeInputs?.irrigationEnergyCostPerHaLocal !== undefined
+          ? String(profile.financeInputs.irrigationEnergyCostPerHaLocal)
+          : '',
+    });
     setProfileModalOpen(true);
   };
 
-  const filteredCountries = useMemo(() => {
-    const q = countrySearch.trim().toLowerCase();
-    if (!q) return GLOBAL_COUNTRIES;
-    return GLOBAL_COUNTRIES.filter(
-      (c) =>
-        c.name.toLowerCase().includes(q) ||
-        c.regionHint.toLowerCase().includes(q) ||
-        c.code.toLowerCase().includes(q)
-    );
-  }, [countrySearch]);
+  const handleProfileLocationSelect = (sel: LocationSelection) => {
+    const prevCountryDefault = getDefaultCurrencyForCountry(editCountryCode).code;
+    setEditCountryCode(sel.country.code);
+    setEditStateName(sel.stateName ?? '');
+    setEditLocalityName(sel.localityName ?? '');
+    setEditRegionLabel(sel.regionLabel);
+    setEditCoords({ lat: sel.lat, lng: sel.lng });
+    if (editFinanceDraft.currencyCode === prevCountryDefault) {
+      setEditFinanceDraft((prev) => ({
+        ...prev,
+        currencyCode: getDefaultCurrencyForCountry(sel.country.code).code,
+      }));
+    }
+  };
 
   const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -155,14 +220,41 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
 
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
+    setProfileFinanceError(null);
+    if (editFinanceDraft.enabled) {
+      const cap = Number(editFinanceDraft.seasonBudgetCapacity);
+      const op = Number(editFinanceDraft.operatingCostPerHa);
+      const fert = Number(editFinanceDraft.fertilizerCostPerHa);
+      if (
+        !Number.isFinite(cap) ||
+        cap <= 0 ||
+        !Number.isFinite(op) ||
+        op <= 0 ||
+        editFinanceDraft.fertilizerCostPerHa === '' ||
+        !Number.isFinite(fert) ||
+        fert < 0
+      ) {
+        setProfileFinanceError(
+          'Please enter your Season Cash Capacity, Avg. Cost / ha, and Fertilizer / ha (or click "Fill typical range").'
+        );
+        return;
+      }
+    }
     setSavingProfile(true);
     const chosenCountry =
       GLOBAL_COUNTRIES.find((c) => c.code === editCountryCode) ?? GLOBAL_COUNTRIES[0];
-    const countryChanged = chosenCountry.code !== profile.countryCode;
+    const locationChanged =
+      editCoords !== null ||
+      chosenCountry.code !== profile.countryCode ||
+      editStateName !== (profile.stateName ?? '') ||
+      editLocalityName !== (profile.localityName ?? '');
 
-    const newBoundary = countryChanged
+    const targetLat = editCoords?.lat ?? chosenCountry.lat;
+    const targetLng = editCoords?.lng ?? chosenCountry.lng;
+
+    const newBoundary = locationChanged
       ? scaleBoundaryToHectares(
-          buildDefaultBoundary(chosenCountry.lat, chosenCountry.lng),
+          buildDefaultBoundary(targetLat, targetLng),
           profile.areaHectares
         )
       : profile.boundary;
@@ -175,18 +267,54 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
         countryCode: chosenCountry.code,
         countryName: chosenCountry.name,
         countryFlag: chosenCountry.flag,
+        stateName: editStateName || undefined,
+        localityName: editLocalityName || undefined,
         climateZone: chosenCountry.climateZone,
-        regionLabel: `${chosenCountry.regionHint}, ${chosenCountry.name}`,
+        regionLabel: editRegionLabel || `${chosenCountry.regionHint}, ${chosenCountry.name}`,
         soilType: editSoil,
         slopeOption: editSlope,
-        ...(countryChanged
+        financeInputs: {
+          ...(profile.financeInputs ?? { includeSubsidies: true }),
+          enabled: editFinanceDraft.enabled,
+          currencyCode: editFinanceDraft.currencyCode,
+          seasonBudgetCapacityLocal:
+            Number(editFinanceDraft.seasonBudgetCapacity) > 0
+              ? Math.round(Number(editFinanceDraft.seasonBudgetCapacity))
+              : undefined,
+          operatingCostPerHaLocal:
+            Number(editFinanceDraft.operatingCostPerHa) > 0
+              ? Math.round(Number(editFinanceDraft.operatingCostPerHa))
+              : undefined,
+          fertilizerCostPerHaLocal:
+            editFinanceDraft.fertilizerCostPerHa !== '' &&
+            Number(editFinanceDraft.fertilizerCostPerHa) >= 0
+              ? Math.round(Number(editFinanceDraft.fertilizerCostPerHa))
+              : undefined,
+          lastSeasonNetProfitLocal:
+            editFinanceDraft.lastSeasonNetProfit !== '' &&
+            Number.isFinite(Number(editFinanceDraft.lastSeasonNetProfit))
+              ? Math.round(Number(editFinanceDraft.lastSeasonNetProfit))
+              : undefined,
+          targetAnnualProfitLocal:
+            Number(editFinanceDraft.targetAnnualProfit) > 0
+              ? Math.round(Number(editFinanceDraft.targetAnnualProfit))
+              : undefined,
+          irrigationEnergyCostPerHaLocal:
+            editFinanceDraft.irrigationEnergyCostPerHa !== '' &&
+            Number(editFinanceDraft.irrigationEnergyCostPerHa) >= 0
+              ? Math.round(Number(editFinanceDraft.irrigationEnergyCostPerHa))
+              : undefined,
+          includeSubsidies: profile.financeInputs?.includeSubsidies ?? true,
+          updatedAt: new Date().toISOString(),
+        },
+        ...(locationChanged
           ? {
-              coordinates: { lat: chosenCountry.lat, lng: chosenCountry.lng },
+              coordinates: { lat: targetLat, lng: targetLng },
               boundary: newBoundary,
             }
           : {}),
       },
-      countryChanged || editSoil !== profile.soilType
+      locationChanged || editSoil !== profile.soilType
     );
 
     setSavingProfile(false);
@@ -198,15 +326,28 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
     setMobileOpen(false);
   };
 
+  const financeEnabled = Boolean(profile.financeInputs?.enabled);
+  const visibleNavItems = NAV_ITEMS.filter(
+    (item) => item.id !== 'market-finance' || financeEnabled
+  );
+
+  useEffect(() => {
+    if (screen === 'market-finance' && !financeEnabled) {
+      navigate('dashboard');
+    }
+  }, [screen, financeEnabled, navigate]);
+
   return (
     <div className="min-h-screen bg-[#F5F4F0] text-[#111111] flex">
       {/* Desktop Left Sidebar */}
-      <aside className="hidden lg:flex lg:flex-col w-[248px] shrink-0 bg-[#FFFEFB] border-r border-[#DFDDD6] sticky top-0 h-screen z-30">
-        <div className="px-5 h-[74px] flex items-center border-b border-[#EFECE6]">
+      <aside className="hidden lg:flex lg:flex-col w-[264px] shrink-0 bg-[#FFFEFB] border-r border-[#DFDDD6] sticky top-0 h-screen z-30">
+        <div className="px-5 h-[76px] flex items-center border-b border-[#E8E5DC]">
           <button
             type="button"
-            onClick={() => navigate('dashboard')}
-            className="text-left cursor-pointer"
+            onClick={() => navigate('landing')}
+            title="Back to Homepage"
+            aria-label="Tadawol Back to Homepage"
+            className="text-left cursor-pointer hover:opacity-90 transition"
           >
             <BrandMark />
           </button>
@@ -214,10 +355,10 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
 
         {/* Active Farm Switcher & Multi-Farm Controls */}
         <div className="px-4 pt-4 pb-2">
-          <div className="bg-[#F5F4F0] rounded-xl p-3 border border-[#E5E3DB] space-y-2">
+          <div className="bg-[#F5F4F0] rounded-2xl p-3.5 border border-[#DFDDD6] space-y-2.5">
             <div className="flex items-center justify-between gap-2">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-[#00873A]">
-                {farms.length > 1 ? `My Farms (${farms.length})` : 'Active Global Farm'}
+              <span className="text-[11px] font-extrabold uppercase tracking-wider text-[#006B2E]">
+                {farms.length > 1 ? `My Farms (${farms.length})` : 'Active Farm'}
               </span>
               <span className="text-base leading-none" title={profile.countryName}>
                 {profile.countryFlag}
@@ -229,7 +370,7 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
                 value={activeFarmId}
                 onChange={(e) => switchFarm(e.target.value)}
                 aria-label="Switch active farm"
-                className="w-full px-2.5 py-1.5 bg-white border border-[#D1D1D1] rounded-lg text-xs font-extrabold text-[#111111] focus:outline-none focus:border-[#00873A] cursor-pointer"
+                className="w-full px-3 py-2 bg-white border border-[#C9C6BC] rounded-xl text-xs font-extrabold text-[#111111] focus:outline-none focus:border-[#00873A] cursor-pointer"
               >
                 {farms.map((f) => (
                   <option key={f.id} value={f.id}>
@@ -238,114 +379,88 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
                 ))}
               </select>
             ) : (
-              <div className="text-sm font-bold text-[#111111] truncate">
+              <div className="text-sm font-extrabold text-[#111111] truncate">
                 {profile.farmName}
               </div>
             )}
 
-            <div className="text-[11px] text-[#6F6F6F] truncate">
-              {profile.countryName} · {profile.areaHectares} ha · {profile.soilType}
+            <div className="text-xs font-medium text-[#2E2E2E] truncate">
+              {profile.localityName
+                ? `${profile.localityName}, ${profile.stateName}`
+                : profile.stateName
+                  ? `${profile.stateName}, ${profile.countryName}`
+                  : profile.countryName}{' '}
+              · {profile.areaHectares} ha · {profile.soilType}
             </div>
 
-            <div className="grid grid-cols-2 gap-1.5 pt-1">
+            <div className="grid grid-cols-2 gap-2 pt-0.5">
               <button
                 type="button"
                 onClick={() => openEditFarmModal('location-size')}
-                className="inline-flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-white hover:bg-[#111111] hover:text-white border border-[#D9D9D9] text-[11px] font-bold text-[#111111] transition cursor-pointer"
+                className="inline-flex items-center justify-center gap-1.5 px-2.5 py-2 rounded-xl bg-white hover:bg-[#111111] hover:text-white border border-[#CFCBC2] text-xs font-bold text-[#111111] transition cursor-pointer"
               >
-                <Pencil className="w-3 h-3" />
+                <Pencil className="w-3.5 h-3.5" />
                 Edit Farm
               </button>
               <button
                 type="button"
                 onClick={openAddFarmModal}
-                className="inline-flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-[#EBB40E] hover:bg-[#111111] hover:text-white text-[11px] font-extrabold text-[#111111] transition cursor-pointer"
+                className="inline-flex items-center justify-center gap-1.5 px-2.5 py-2 rounded-xl bg-[#EBB40E] hover:bg-[#111111] hover:text-white text-xs font-extrabold text-[#111111] transition cursor-pointer"
               >
-                <Plus className="w-3 h-3" />
+                <Plus className="w-3.5 h-3.5" />
                 Add Farm
               </button>
             </div>
           </div>
         </div>
 
-        {/* 5 Primary Navigation Links */}
-        <nav className="flex-1 px-3 py-3 space-y-1.5 overflow-y-auto">
-          {NAV_ITEMS.map((item) => {
+        {/* Primary Navigation Links */}
+        <div className="px-5 pt-3 pb-1 text-[11px] font-extrabold uppercase tracking-wider text-[#555555]">
+          Workspace
+        </div>
+        <nav className="flex-1 px-3 pb-3 space-y-1.5 overflow-y-auto">
+          {visibleNavItems.map((item) => {
             const active = screen === item.id;
             return (
               <button
                 key={item.id}
                 type="button"
                 onClick={() => handleNav(item.id)}
-                className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-left transition cursor-pointer ${
+                className={`w-full flex items-center gap-3 px-3.5 py-3 rounded-xl text-left transition cursor-pointer ${
                   active
-                    ? 'bg-[#00873A] text-white shadow-xs'
-                    : 'text-[#3B3B3B] hover:bg-[#F5F4F0] hover:text-[#111111]'
+                    ? 'bg-[#00873A] text-white shadow-sm'
+                    : 'text-[#1E1E1E] hover:bg-[#F2F0E8] hover:text-[#111111]'
                 }`}
               >
                 <span
-                  className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
-                    active ? 'bg-white/15 text-white' : 'bg-[#F5F4F0] text-[#00873A]'
+                  className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${
+                    active ? 'bg-white/20 text-white' : 'bg-[#EFECE4] text-[#007432]'
                   }`}
                 >
                   {item.icon}
                 </span>
-                <div className="min-w-0">
-                  <div className="text-sm font-bold leading-tight truncate">{item.label}</div>
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-extrabold leading-tight truncate">{item.label}</div>
                   <div
-                    className={`text-[11px] truncate ${
-                      active ? 'text-white/80' : 'text-[#6F6F6F]'
+                    className={`text-xs truncate mt-0.5 ${
+                      active ? 'text-white/90' : 'text-[#3A3A3A]'
                     }`}
                   >
                     {item.sub}
                   </div>
                 </div>
+                {active && <span className="w-2 h-2 rounded-full bg-[#EBB40E] shrink-0" />}
               </button>
             );
           })}
         </nav>
 
-        {/* Bottom Satellite Status & Logout */}
-        <div className="p-4 border-t border-[#EFECE6] space-y-2">
-          <button
-            type="button"
-            onClick={() => setIsDataSourcesOpen(true)}
-            className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-[#F5F4F0] hover:bg-[#E3F5EB] border border-[#E2E0D8] text-left transition cursor-pointer"
-          >
-            <div className="flex items-center gap-2 min-w-0">
-              <Satellite className="w-4 h-4 text-[#00873A] shrink-0" />
-              <div className="min-w-0">
-                <div className="text-[11px] font-bold text-[#111111] truncate">
-                  {profile.nasaPower.source === 'nasa-power-live'
-                    ? 'NASA POWER Live'
-                    : 'NASA Baseline Active'}
-                </div>
-                <div className="text-[10px] text-[#6F6F6F] truncate">
-                  SMAP · MODIS · SRTM Directory
-                </div>
-              </div>
-            </div>
-            <span className="w-2 h-2 rounded-full bg-[#44BE7E] shrink-0" />
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setContractModalOpen(true)}
-            className="w-full inline-flex items-center justify-between gap-2 px-3 py-2 rounded-xl border border-[#DFDDD6] bg-white hover:border-[#111111] text-[11px] font-bold text-[#474747] transition cursor-pointer"
-          >
-            <span className="inline-flex items-center gap-1.5">
-              <Code2 className="w-3.5 h-3.5 text-[#00873A]" />
-              API Contract
-            </span>
-            <span className="text-[10px] text-[#00873A]">
-              {contractSource === 'remote-api' ? 'Live' : 'Ready'}
-            </span>
-          </button>
-
+        {/* Bottom Logout */}
+        <div className="p-4 border-t border-[#E8E5DC]">
           <button
             type="button"
             onClick={logout}
-            className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-full border border-[#D9D9D9] text-xs font-semibold text-[#474747] hover:bg-[#111111] hover:text-white hover:border-[#111111] transition cursor-pointer"
+            className="w-full inline-flex items-center justify-center gap-2 px-3 py-2.5 rounded-full border border-[#CFCBC2] text-xs font-bold text-[#2E2E2E] hover:bg-[#111111] hover:text-white hover:border-[#111111] transition cursor-pointer"
           >
             <LogOut className="w-3.5 h-3.5" />
             Log Out
@@ -360,9 +475,20 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
             className="fixed inset-0 bg-[#111111]/60 backdrop-blur-xs"
             onClick={() => setMobileOpen(false)}
           />
-          <aside className="relative z-10 w-[275px] max-w-[85vw] bg-[#FFFEFB] h-full flex flex-col shadow-2xl">
-            <div className="px-5 h-[68px] flex items-center justify-between border-b border-[#EFECE6]">
-              <BrandMark />
+          <aside className="relative z-10 w-[285px] max-w-[85vw] bg-[#FFFEFB] h-full flex flex-col shadow-2xl">
+            <div className="px-5 h-[68px] flex items-center justify-between border-b border-[#E8E5DC]">
+              <button
+                type="button"
+                onClick={() => {
+                  navigate('landing');
+                  setMobileOpen(false);
+                }}
+                title="Back to Homepage"
+                aria-label="Tadawol Back to Homepage"
+                className="text-left cursor-pointer hover:opacity-90 transition"
+              >
+                <BrandMark />
+              </button>
               <button
                 type="button"
                 onClick={() => setMobileOpen(false)}
@@ -418,7 +544,7 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
               </div>
             </div>
             <nav className="flex-1 px-3 py-4 space-y-1.5 overflow-y-auto">
-              {NAV_ITEMS.map((item) => {
+              {visibleNavItems.map((item) => {
                 const active = screen === item.id;
                 return (
                   <button
@@ -437,8 +563,8 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
                       {item.icon}
                     </span>
                     <div>
-                      <div className="text-sm font-bold">{item.label}</div>
-                      <div className={`text-[11px] ${active ? 'text-white/80' : 'text-[#6F6F6F]'}`}>
+                      <div className="text-sm font-extrabold">{item.label}</div>
+                      <div className={`text-xs ${active ? 'text-white/90' : 'text-[#3A3A3A]'}`}>
                         {item.sub}
                       </div>
                     </div>
@@ -446,22 +572,11 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
                 );
               })}
             </nav>
-            <div className="p-4 border-t border-[#EFECE6] space-y-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setMobileOpen(false);
-                  setIsDataSourcesOpen(true);
-                }}
-                className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-full bg-[#F5F4F0] text-xs font-bold text-[#111111] cursor-pointer"
-              >
-                <Satellite className="w-3.5 h-3.5 text-[#00873A]" />
-                Data Sources Directory
-              </button>
+            <div className="p-4 border-t border-[#E8E5DC] space-y-2">
               <button
                 type="button"
                 onClick={logout}
-                className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-full border border-[#D9D9D9] text-xs font-semibold text-[#474747] cursor-pointer"
+                className="w-full inline-flex items-center justify-center gap-2 px-3 py-2.5 rounded-full border border-[#CFCBC2] text-xs font-bold text-[#2E2E2E] cursor-pointer"
               >
                 <LogOut className="w-3.5 h-3.5" />
                 Log Out
@@ -471,31 +586,48 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
         </div>
       )}
 
-      {/* Main Content Area — Automatically Resizes Side-by-Side When SplitAiChatbot Expands */}
+      {/* Main Content Area: Resizes Side-by-Side When SplitAiChatbot Expands */}
       <div className="flex-1 min-w-0 flex flex-col transition-all duration-300">
         {/* Top Bar: "Hello, [Farmer Name]" + Interactive Profile Photo w/ Country Flag Badge */}
-        <header className="h-[74px] bg-[#FFFEFB]/95 backdrop-blur-sm border-b border-[#DFDDD6] sticky top-0 z-20 px-4 sm:px-6 flex items-center justify-between gap-3">
+        <header className="h-[76px] bg-[#FFFEFB]/95 backdrop-blur-sm border-b border-[#DFDDD6] sticky top-0 z-20 px-5 sm:px-8 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
             <button
               type="button"
               onClick={() => setMobileOpen(true)}
-              className="lg:hidden p-2 rounded-full border border-[#D9D9D9] hover:bg-[#F5F4F0] cursor-pointer shrink-0"
+              className="lg:hidden p-2 rounded-full border border-[#CFCBC2] hover:bg-[#F5F4F0] cursor-pointer shrink-0"
               aria-label="Open menu"
             >
               <Menu className="w-5 h-5" />
             </button>
             <div className="min-w-0">
-              <h1 className="text-base sm:text-xl font-extrabold text-[#111111] truncate">
-                Hello, {profile.name}
-              </h1>
-              <div className="flex items-center gap-2 text-[11px] sm:text-xs text-[#6F6F6F] truncate">
-                <span>
-                  {profile.countryFlag} {profile.countryName}
+              <div className="flex items-center gap-2.5 min-w-0">
+                <h1 className="text-base sm:text-xl font-extrabold text-[#111111] truncate">
+                  Hello, {profile.name}
+                </h1>
+                <span className="hidden md:inline-flex items-center px-2.5 py-0.5 rounded-full bg-[#E3F5EB] text-[#006B2E] text-xs font-extrabold shrink-0">
+                  {NAV_ITEMS.find((n) => n.id === screen)?.label ?? 'Workspace'}
                 </span>
-                <span>•</span>
-                <span className="truncate">{profile.farmName}</span>
+              </div>
+              <div className="flex items-center gap-2 text-xs font-medium text-[#3A3A3A] truncate mt-0.5">
+                <span>
+                  {profile.countryFlag}{' '}
+                  {profile.localityName
+                    ? `${profile.localityName}, ${profile.stateName}, ${profile.countryName}`
+                    : profile.stateName
+                      ? `${profile.stateName}, ${profile.countryName}`
+                      : profile.countryName}
+                </span>
+                <span className="text-[#9A968C]">·</span>
+                <span className="truncate font-semibold text-[#1E1E1E]">{profile.farmName}</span>
+                {profile.email === 'demo@tadawol.app' && (
+                  <span className="shrink-0 rounded-full bg-[#FFF4C4] px-2 py-0.5 text-[9px] font-extrabold uppercase tracking-wide text-[#6E5100]">
+                    Demo data
+                  </span>
+                )}
+                <span className="hidden sm:inline text-[#9A968C]">·</span>
+                <span className="hidden sm:inline">{profile.areaHectares} ha</span>
                 {isFetchingNasa && (
-                  <span className="inline-flex items-center gap-1 text-[#00873A] font-semibold">
+                  <span className="inline-flex items-center gap-1 text-[#007432] font-bold">
                     <RefreshCw className="w-3 h-3 animate-spin" />
                     Syncing NASA...
                   </span>
@@ -506,18 +638,21 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
 
           {/* Right Action Controls */}
           <div className="flex items-center gap-2 sm:gap-2.5 shrink-0">
+            {/* Dark / Light Mode Toggle */}
+            <ThemeToggleButton />
+
             {/* Split-Screen AI Chatbot Toggle */}
             <button
               type="button"
               onClick={() => setIsChatOpen(!isChatOpen)}
-              className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-bold border transition cursor-pointer ${
+              className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-full text-xs font-extrabold border transition cursor-pointer ${
                 isChatOpen
                   ? 'bg-[#111111] text-[#EBB40E] border-[#111111]'
                   : 'bg-[#EBB40E] text-[#111111] border-[#EBB40E] hover:bg-[#111111] hover:text-white hover:border-[#111111]'
               }`}
             >
               <Bot className="w-4 h-4" />
-              <span className="hidden sm:inline">{isChatOpen ? 'AI Split Open' : 'AI Advisor'}</span>
+              <span className="hidden sm:inline">{isChatOpen ? 'Close AI Panel' : 'AI Advisor'}</span>
             </button>
 
             {/* Quick Refresh Live NASA POWER */}
@@ -526,7 +661,7 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
               onClick={() => void refreshLiveNasaData()}
               disabled={isFetchingNasa}
               title="Refresh live NASA POWER satellite weather & moisture"
-              className="hidden md:inline-flex items-center gap-1.5 px-3 py-2 rounded-full bg-[#F5F4F0] hover:bg-[#E3F5EB] border border-[#D9D9D9] text-xs font-semibold text-[#111111] transition cursor-pointer disabled:opacity-50"
+              className="hidden md:inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-[#F5F4F0] hover:bg-[#E3F5EB] border border-[#CFCBC2] text-xs font-bold text-[#111111] transition cursor-pointer disabled:opacity-50"
             >
               <RefreshCw
                 className={`w-3.5 h-3.5 text-[#00873A] ${isFetchingNasa ? 'animate-spin' : ''}`}
@@ -539,7 +674,7 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
               type="button"
               onClick={openProfileSettings}
               title="Open Profile Settings (Change Photo, Country Flag & Farm Info)"
-              className="relative flex items-center gap-2.5 pl-1 pr-3 py-1 rounded-full bg-[#F5F4F0] hover:bg-[#EFECE6] border border-[#D9D9D9] transition cursor-pointer"
+              className="relative flex items-center gap-2.5 pl-1.5 pr-3.5 py-1 rounded-full bg-[#F5F4F0] hover:bg-[#EAE7DE] border border-[#CFCBC2] transition cursor-pointer"
             >
               <div className="relative shrink-0">
                 {profile.photoDataUrl ? (
@@ -556,23 +691,25 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
                 {/* Country Flag Badge clearly attached to bottom-right of Profile Icon */}
                 <span
                   aria-label={`Country: ${profile.countryName}`}
-                  className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-white border border-[#D1D1D1] shadow-sm flex items-center justify-center text-[11px] leading-none"
+                  className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-white border border-[#C9C6BC] shadow-sm flex items-center justify-center text-[11px] leading-none"
                 >
                   {profile.countryFlag}
                 </span>
               </div>
               <div className="hidden sm:block text-left leading-tight">
-                <div className="text-xs font-bold text-[#111111] max-w-[115px] truncate">
+                <div className="text-xs font-extrabold text-[#111111] max-w-[115px] truncate">
                   {profile.name.split(' ')[0]}
                 </div>
-                <div className="text-[10px] text-[#6F6F6F]">Profile &amp; Country</div>
+                <div className="text-[11px] font-medium text-[#3A3A3A]">Profile &amp; Country</div>
               </div>
             </button>
           </div>
         </header>
 
         {/* Page Main Content */}
-        <main className="flex-1 p-4 sm:p-6 max-w-[1440px] w-full mx-auto">{children}</main>
+        <main className="flex-1 px-5 sm:px-8 py-6 sm:py-7 max-w-[1440px] w-full mx-auto">
+          {children}
+        </main>
       </div>
 
       {/* Dedicated Resizable Split-Screen AI Chatbot Column (or Compact Dock When Minimized) */}
@@ -593,7 +730,7 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
           onClick={() => setProfileModalOpen(false)}
         >
           <div
-            className="bg-[#FFFEFB] border border-[#D9D9D9] rounded-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto shadow-2xl animate-fade-in"
+            className="bg-[#FFFEFB] border border-[#D9D9D9] rounded-2xl max-w-xl w-full max-h-[90vh] overflow-y-auto shadow-2xl animate-fade-in"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="px-6 py-4 bg-[#00873A] text-white flex items-center justify-between">
@@ -661,8 +798,8 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
                       </button>
                     )}
                   </div>
-                  <p className="text-[11px] text-[#6F6F6F]">
-                    Instant preview — your selected country flag badge stays attached.
+                  <p className="text-[11px] text-[#3A3A3A]">
+                    Instant preview: your selected country flag badge stays attached.
                   </p>
                 </div>
               </div>
@@ -690,32 +827,15 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
                 </div>
               </div>
 
-              {/* Searchable Country Switcher */}
+              {/* Live Flagged Country -> State/Governorate -> Delegation/Area Picker */}
               <div className="space-y-1.5">
-                <label className="block text-xs font-bold text-[#111111]">
-                  Country (Updates Flag Badge &amp; Regional NASA Data)
-                </label>
-                <div className="relative">
-                  <Search className="w-3.5 h-3.5 text-[#6F6F6F] absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="text"
-                    value={countrySearch}
-                    onChange={(e) => setCountrySearch(e.target.value)}
-                    placeholder="Filter countries..."
-                    className="w-full pl-8 pr-3 py-1.5 bg-[#F5F4F0] border border-[#D1D1D1] rounded-t-xl text-xs focus:outline-none focus:bg-white"
-                  />
-                </div>
-                <select
-                  value={editCountryCode}
-                  onChange={(e) => setEditCountryCode(e.target.value)}
-                  className="w-full px-3 py-2 bg-white border border-t-0 border-[#D1D1D1] rounded-b-xl text-sm font-medium focus:outline-none focus:border-[#00873A]"
-                >
-                  {filteredCountries.map((c) => (
-                    <option key={c.code} value={c.code}>
-                      {c.flag} {c.name} ({c.climateZone})
-                    </option>
-                  ))}
-                </select>
+                <LocationCascadePicker
+                  compact
+                  countryCode={editCountryCode}
+                  stateName={editStateName}
+                  localityName={editLocalityName}
+                  onSelect={handleProfileLocationSelect}
+                />
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -750,6 +870,31 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
                   </select>
                 </div>
               </div>
+
+              {/* App Language Selector (22 languages covering all 42 countries) */}
+              <div className="space-y-1.5">
+                <label className="block text-xs font-bold text-[#111111]">
+                  App Language (22 Languages · All 42 Countries)
+                </label>
+                <LanguageSelector align="left" />
+              </div>
+
+              {/* Optional Farm Finance & Currency Preference (Checkbox Tick + Required/Optional Capacity & Profit Fields) */}
+              <FarmFinanceFields
+                draft={editFinanceDraft}
+                onChange={(next) => {
+                  setEditFinanceDraft(next);
+                  setProfileFinanceError(null);
+                }}
+                countryCode={editCountryCode}
+                countryName={
+                  GLOBAL_COUNTRIES.find((c) => c.code === editCountryCode)?.name ??
+                  profile.countryName
+                }
+                irrigationType={profile.irrigationType}
+                areaHectares={profile.areaHectares}
+                validationError={profileFinanceError}
+              />
 
               <div className="p-3 rounded-xl bg-[#E3F5EB]/60 border border-[#B8E5CC] flex flex-wrap items-center justify-between gap-2">
                 <div className="text-xs text-[#005A26] font-semibold">
@@ -806,19 +951,6 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
 
       {/* Multi-Farm Add / Partial Edit Modal */}
       <FarmManagerModal />
-
-      {/* Global Categorized 3-Phase Data Sources & Official Satellite Portals Modal */}
-      <DataSourcesModal
-        open={isDataSourcesOpen}
-        onClose={() => setIsDataSourcesOpen(false)}
-        liveNasaStatus={profile.nasaPower.source}
-      />
-
-      {/* Shared contract.json Inspector Modal */}
-      <ContractInspectorModal
-        open={contractModalOpen}
-        onClose={() => setContractModalOpen(false)}
-      />
     </div>
   );
 };

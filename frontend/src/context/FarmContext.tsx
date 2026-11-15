@@ -1,21 +1,32 @@
-import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AppScreen,
   CalendarEvent,
   ChatMessage,
   FarmBeforeAnalysis,
   FarmEditTab,
+  FarmerFinanceInputs,
   FarmerProfile,
   FarmRecord,
+  PendingPlanProposal,
+  PlanCustomization,
   ScoredRotationStrategy,
   StoredAccount,
+  StrategyChangeRecord,
 } from '../types/farm';
 import {
+  applyPlanCustomization,
   buildBeforeFarmAnalysis,
   buildFarmCalendarEvents,
   DEFAULT_GLOBAL_PROFILE,
   evaluateTop3Strategies,
 } from '../data/decisionEngine';
+import { applyFinanceParameterToStrategies } from '../data/regionalMarketData';
+import {
+  askGrokAdvisor,
+  buildSmartOfflineReply,
+  checkServerAiStatus,
+} from '../api/grokAiService';
 import {
   buildFallbackNasaPower,
   fetchLiveNasaPower,
@@ -33,7 +44,6 @@ import {
   executeOptimizationContract,
   simulateContractResponse,
 } from '../api/tadawolClient';
-import { askAdvisor } from '../api/advisorClient';
 
 export interface ContractSettings {
   years: number;
@@ -53,7 +63,12 @@ export interface FarmModalState {
 
 export type NewFarmInput = Omit<
   FarmRecord,
-  'id' | 'nasaPower' | 'selectedStrategyId' | 'customCalendarEvents' | 'completedEventIds'
+  | 'id'
+  | 'nasaPower'
+  | 'selectedStrategyId'
+  | 'customCalendarEvents'
+  | 'completedEventIds'
+  | 'planCustomization'
 >;
 
 interface FarmContextValue {
@@ -80,15 +95,23 @@ interface FarmContextValue {
   top3Strategies: ScoredRotationStrategy[];
   selectedStrategyId: string | null;
   activeStrategy: ScoredRotationStrategy;
+  planCustomization?: PlanCustomization;
+  strategyHistory: StrategyChangeRecord[];
+  resetPlanCustomization: () => void;
   // Calendar
   calendarEvents: CalendarEvent[];
   toggleCalendarComplete: (eventId: string) => void;
   addCalendarEvent: (ev: Omit<CalendarEvent, 'id' | 'isCustom'>) => void;
-  // Global Split-Screen AI Chatbot
+  // Global Split-Screen AI Chatbot (Server-managed Free/Live AI)
   isChatOpen: boolean;
   setIsChatOpen: (open: boolean) => void;
+  openAiAdvisorForCustomPlan: () => void;
   chatMessages: ChatMessage[];
+  isChatThinking: boolean;
+  aiProviderLabel: string;
   sendChatMessage: (text: string) => Promise<void>;
+  confirmPlanProposal: (messageId: string) => void;
+  cancelPlanProposal: (messageId: string) => void;
   // Global Data Sources Directory Modal
   isDataSourcesOpen: boolean;
   setIsDataSourcesOpen: (open: boolean) => void;
@@ -106,38 +129,21 @@ interface FarmContextValue {
   // Auth & Profile actions
   toastMessage: string | null;
   navigate: (screen: AppScreen, options?: { authTab?: 'login' | 'register' }) => void;
-  loginWithCredentials: (email: string, password: string) => { ok: boolean; error?: string };
-  loginDemoAccount: () => void;
+  loginWithCredentials: (email: string, password: string) => Promise<{ ok: boolean; error?: string }>;
   registerAccount: (
     newProfile: Omit<FarmerProfile, 'nasaPower'>,
     password: string
-  ) => Promise<void>;
+  ) => Promise<{ ok: boolean; error?: string }>;
   logout: () => void;
   updateProfile: (updates: Partial<FarmerProfile>, refetchNasa?: boolean) => Promise<void>;
   refreshLiveNasaData: () => Promise<void>;
   selectRotationStrategy: (strategyId: string | null) => void;
+  saveFarmFinanceInputs: (inputs: FarmerFinanceInputs | undefined) => void;
   showToast: (msg: string) => void;
 }
 
 const ACCOUNTS_KEY = 'tadawol_global_accounts_v3';
 const SESSION_KEY = 'tadawol_global_session_v3';
-
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
-const NAME_PATTERN = /^[\p{L}][\p{L}\s.'-]{1,79}$/u;
-const FARM_NAME_PATTERN = /^[\p{L}\p{N}][\p{L}\p{N}\s.'&()_-]{1,99}$/u;
-
-function validateCredentials(email: string, password: string): string | null {
-  if (!EMAIL_PATTERN.test(email.trim().toLowerCase())) {
-    return 'Please enter a valid email address.';
-  }
-  if (password.length < 8) {
-    return 'Password must contain at least 8 characters.';
-  }
-  if (!/[A-Z]/.test(password) || !/[a-z]/.test(password) || !/\d/.test(password)) {
-    return 'Password must include an uppercase letter, a lowercase letter, and a number.';
-  }
-  return null;
-}
 
 const DEFAULT_CONTRACT_SETTINGS: ContractSettings = {
   years: DEFAULT_CONTRACT_REQUEST.years,
@@ -154,7 +160,8 @@ function profileToFarmRecord(
   id: string,
   selectedStrategyId: string | null = null,
   customCalendarEvents: CalendarEvent[] = [],
-  completedEventIds: string[] = []
+  completedEventIds: string[] = [],
+  strategyHistory: StrategyChangeRecord[] = []
 ): FarmRecord {
   return {
     id,
@@ -162,6 +169,8 @@ function profileToFarmRecord(
     countryCode: p.countryCode,
     countryName: p.countryName,
     countryFlag: p.countryFlag,
+    stateName: p.stateName,
+    localityName: p.localityName,
     climateZone: p.climateZone,
     regionLabel: p.regionLabel,
     coordinates: p.coordinates,
@@ -174,9 +183,11 @@ function profileToFarmRecord(
     equipment: p.equipment,
     previousCrops: p.previousCrops,
     nasaPower: p.nasaPower,
+    financeInputs: p.financeInputs,
     selectedStrategyId,
     customCalendarEvents,
     completedEventIds,
+    strategyHistory,
   };
 }
 
@@ -192,12 +203,72 @@ function hydrateFarm(farm: FarmRecord): FarmRecord {
 }
 
 function createDemoAccount(): StoredAccount {
-  const primaryFarm = profileToFarmRecord(DEFAULT_GLOBAL_PROFILE, 'farm-default-1');
+  const demoProfile: FarmerProfile = {
+    ...DEFAULT_GLOBAL_PROFILE,
+    name: 'Amine Ben Salem',
+    email: 'demo@tadawol.app',
+    farmName: 'El-Khadhra Valley Farm',
+    stateName: 'Manouba Governorate',
+    localityName: 'Medjerda Valley',
+    regionLabel: 'Medjerda Valley, Tunisia',
+    previousCrops: ['Wheat', 'Barley', 'Chickpeas', 'Wheat', 'Fava beans'],
+    equipment: ['Tractor & Basic Plow', 'Drip Irrigation Lines', 'Soil Moisture Sensor'],
+    financeInputs: {
+      enabled: true,
+      currencyCode: 'TND',
+      seasonBudgetCapacityLocal: 42000,
+      operatingCostPerHaLocal: 1180,
+      fertilizerCostPerHaLocal: 320,
+      lastSeasonNetProfitLocal: 26500,
+      targetAnnualProfitLocal: 32000,
+      irrigationEnergyCostPerHaLocal: 145,
+      includeSubsidies: true,
+    },
+  };
+  const strategies = evaluateTop3Strategies(demoProfile);
+  const historyRecord = (
+    strategy: ScoredRotationStrategy,
+    id: string,
+    recordedAt: string,
+    actionType: StrategyChangeRecord['actionType'],
+    summary: string,
+    fromStrategyTitle?: string
+  ): StrategyChangeRecord => ({
+    id, recordedAt, source: 'rotation-lab', actionType, summary, fromStrategyTitle,
+    strategyId: strategy.id, strategyTitle: strategy.title,
+    tierLabel: strategy.tierLabel, focusTag: strategy.focusTag,
+    stages: strategy.steps.map((step) => ({
+      cropName: step.cropName, cropFamily: step.cropFamily,
+      cropColor: step.cropColor,
+    })),
+    metrics: {
+      yieldImprovementPct: strategy.expectedOutput.yieldImprovementPct,
+      chemicalReductionPct: strategy.expectedOutput.chemicalReductionPct,
+      waterSavingsPct: strategy.expectedOutput.waterSavingsPct,
+    },
+  });
+  const first = strategies[0];
+  const second = strategies[1] ?? first;
+  const third = strategies[2] ?? second;
+  const strategyHistory = [
+    historyRecord(first, 'demo-history-2023', '2023-10-12T09:00:00.000Z', 'initial-selection', 'Started a soil-restoring rotation after consecutive cereal seasons.'),
+    historyRecord(second, 'demo-history-2024', '2024-09-18T10:30:00.000Z', 'strategy-switch', 'Switched to a water-smart rotation after reviewing the dry-season outlook.', first.title),
+    historyRecord(third, 'demo-history-2025', '2025-10-03T08:15:00.000Z', 'strategy-switch', 'Added a legume break and cover crop to rebuild soil nitrogen.', second.title),
+  ];
+  const events: CalendarEvent[] = [
+    { id: 'demo-event-1', date: '2026-10-10', year: 2026, month: 10, season: 'Autumn', phase: 'past', category: 'soil', title: 'Soil moisture check', description: 'Review NASA root-zone wetness before sowing.', isCustom: true },
+    { id: 'demo-event-2', date: '2026-11-22', year: 2026, month: 11, season: 'Autumn', phase: 'current', category: 'planting', title: 'Sow durum wheat', description: 'Plant after the first reliable autumn rain.', cropName: 'Durum wheat', isCustom: true },
+    { id: 'demo-event-3', date: '2027-03-15', year: 2027, month: 3, season: 'Spring', phase: 'future', category: 'water', title: 'Check irrigation schedule', description: 'Use updated NASA rainfall and soil-moisture readings to plan irrigation.', isCustom: true },
+    { id: 'demo-event-4', date: '2027-05-28', year: 2027, month: 5, season: 'Spring', phase: 'future', category: 'harvest', title: 'Review cereal harvest', description: 'Record yield and update the next rotation plan.', cropName: 'Durum wheat', isCustom: true },
+  ];
+  const primaryFarm = profileToFarmRecord(
+    demoProfile, 'farm-default-1', first.id, events, ['demo-event-1'], strategyHistory
+  );
   return {
-    email: DEFAULT_GLOBAL_PROFILE.email,
+    email: demoProfile.email,
     password: 'tadawol123',
-    name: DEFAULT_GLOBAL_PROFILE.name,
-    photoDataUrl: DEFAULT_GLOBAL_PROFILE.photoDataUrl,
+    name: demoProfile.name,
+    photoDataUrl: demoProfile.photoDataUrl,
     farms: [primaryFarm],
     activeFarmId: primaryFarm.id,
     updatedAt: new Date().toISOString(),
@@ -247,7 +318,14 @@ function loadAccounts(): StoredAccount[] {
     const raw = localStorage.getItem(ACCOUNTS_KEY);
     if (raw) {
       const parsed = JSON.parse(raw) as StoredAccount[];
-      if (Array.isArray(parsed) && parsed.length > 0) return parsed.map(hydrateAccount);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        const hydrated = parsed.map(hydrateAccount);
+        if (!hydrated.some((account) => account.email === 'demo@tadawol.app')) {
+          hydrated.unshift(createDemoAccount());
+          saveAccounts(hydrated);
+        }
+        return hydrated;
+      }
     }
   } catch {
     // ignore storage parse failure
@@ -275,7 +353,7 @@ function buildWelcomeMessages(profile: FarmerProfile): ChatMessage[] {
       id: `ai-welcome-${Date.now()}`,
       role: 'assistant',
       timestamp: 'Now',
-      content: `Hello ${profile.name.split(' ')[0]}! I'm your **Tadawol AI Advisor**.\n\nI'm connected to **${profile.farmName}** in **${profile.countryFlag} ${profile.countryName}** (${profile.areaHectares} ha, **${profile.soilType}** soil) and your **NASA POWER** weather & soil moisture data (**${profile.nasaPower.moistureStatus}**, ${profile.nasaPower.rootMoisturePct}%).\n\nAsk me anything in plain language — like how to cut fertilizer costs, save water, check frost/rain risks, or compare your Top 3 rotation plans!`,
+      content: `Hello ${profile.name.split(' ')[0]}! I'm your **Tadawol AI Advisor**.\n\nI'm connected to **${profile.farmName}** in **${profile.countryFlag} ${profile.countryName}** (${profile.areaHectares} ha, **${profile.soilType}** soil) and your **NASA POWER** weather & soil moisture data (**${profile.nasaPower.moistureStatus}**, ${profile.nasaPower.rootMoisturePct}%).\n\nAsk me anything in plain language, like how to cut fertilizer costs, save water, check frost/rain risks, or compare your Top 3 rotation plans!`,
     },
   ];
 }
@@ -338,6 +416,8 @@ export const FarmProvider: React.FC<{ children: React.ReactNode }> = ({ children
       countryCode: activeFarm.countryCode,
       countryName: activeFarm.countryName,
       countryFlag: activeFarm.countryFlag,
+      stateName: activeFarm.stateName,
+      localityName: activeFarm.localityName,
       climateZone: activeFarm.climateZone,
       regionLabel: activeFarm.regionLabel,
       coordinates: activeFarm.coordinates,
@@ -350,6 +430,7 @@ export const FarmProvider: React.FC<{ children: React.ReactNode }> = ({ children
       equipment: activeFarm.equipment,
       previousCrops: activeFarm.previousCrops,
       nasaPower: activeFarm.nasaPower,
+      financeInputs: activeFarm.financeInputs,
     }),
     [ownerName, currentEmail, seedAccount.email, ownerPhoto, activeFarm]
   );
@@ -357,6 +438,23 @@ export const FarmProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>(() =>
     buildWelcomeMessages(profile)
   );
+  const [isChatThinking, setIsChatThinking] = useState<boolean>(false);
+  const chatThinkingRef = useRef<boolean>(false);
+  const [serverAiConfigured, setServerAiConfigured] = useState<boolean>(false);
+  const [aiProviderLabel, setAiProviderLabel] = useState<string>('Live AI');
+
+  useEffect(() => {
+    let active = true;
+    void checkServerAiStatus().then((st) => {
+      if (!active) return;
+      setServerAiConfigured(st.serverConfigured);
+      setAiProviderLabel(st.providerLabel);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // Shared contract.json state
@@ -380,14 +478,18 @@ export const FarmProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Decision Engine live computations for the Active Farm
   const beforeAnalysis = useMemo(() => buildBeforeFarmAnalysis(profile), [profile]);
-  const top3Strategies = useMemo(() => evaluateTop3Strategies(profile), [profile]);
+  const top3Strategies = useMemo(
+    () => applyFinanceParameterToStrategies(profile, evaluateTop3Strategies(profile)),
+    [profile]
+  );
   const selectedStrategyId = activeFarm.selectedStrategyId;
+  const planCustomization = activeFarm.planCustomization;
   const activeStrategy = useMemo(() => {
-    if (selectedStrategyId) {
-      return top3Strategies.find((s) => s.id === selectedStrategyId) ?? top3Strategies[0];
-    }
-    return top3Strategies[0];
-  }, [selectedStrategyId, top3Strategies]);
+    const base = selectedStrategyId
+      ? (top3Strategies.find((s) => s.id === selectedStrategyId) ?? top3Strategies[0])
+      : top3Strategies[0];
+    return applyPlanCustomization(base, planCustomization);
+  }, [selectedStrategyId, top3Strategies, planCustomization]);
 
   // Combined Farm Calendar events scoped to the Active Farm
   const calendarEvents = useMemo(() => {
@@ -454,9 +556,16 @@ export const FarmProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
   }, [currentEmail, screen, ownerName, ownerPhoto, farms, activeFarmId]);
 
-  // Automatically fetch live NASA POWER for active farm if still fallback
+  // Refresh old saved records once so newly added Earth Engine layers can populate.
   useEffect(() => {
-    if (isAuthenticated && activeFarm.nasaPower.source === 'nasa-power-fallback' && !isFetchingNasa) {
+    const satelliteCheckedAt = Date.parse(activeFarm.nasaPower.satelliteCheckedAt ?? '');
+    const satelliteCheckStale =
+      !Number.isFinite(satelliteCheckedAt) || Date.now() - satelliteCheckedAt > 24 * 60 * 60 * 1000;
+    if (
+      isAuthenticated &&
+      !isFetchingNasa &&
+      (activeFarm.nasaPower.source === 'nasa-power-fallback' || satelliteCheckStale)
+    ) {
       void refreshLiveNasaData();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -483,7 +592,13 @@ export const FarmProvider: React.FC<{ children: React.ReactNode }> = ({ children
       activeFarm.slopeDeg
     );
     setFarms((prev) =>
-      prev.map((f) => (f.id === targetFarmId ? { ...f, nasaPower: liveData } : f))
+      prev.map((f) => f.id !== targetFarmId ? f : {
+        ...f,
+        nasaPower: liveData,
+        ...(f.slopeOption === 'Auto-detect via SRTM Elevation' && liveData.srtmSlopeDeg !== null
+          ? { slopeDeg: liveData.srtmSlopeDeg }
+          : {}),
+      })
     );
     setIsFetchingNasa(false);
     if (liveData.source === 'nasa-power-live') {
@@ -533,7 +648,10 @@ export const FarmProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const newFarm: FarmRecord = {
       ...input,
       id: `farm-${Date.now().toString(36)}`,
-      slopeDeg: resolvedSlope,
+      slopeDeg:
+        input.slopeOption === 'Auto-detect via SRTM Elevation' && liveNasa.srtmSlopeDeg !== null
+          ? liveNasa.srtmSlopeDeg
+          : resolvedSlope,
       nasaPower: liveNasa,
       selectedStrategyId: null,
       customCalendarEvents: [],
@@ -592,8 +710,11 @@ export const FarmProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (needsNasaRefresh) {
       setIsFetchingNasa(true);
       const freshNasa = await fetchLiveNasaPower(nextCoords, nextSoil, nextSlopeDeg);
+      const resolvedSrtmSlope = nextSlopeOpt === 'Auto-detect via SRTM Elevation'
+        ? freshNasa.srtmSlopeDeg ?? nextSlopeDeg
+        : nextSlopeDeg;
       setFarms((prev) =>
-        prev.map((f) => (f.id === targetFarmId ? { ...f, nasaPower: freshNasa } : f))
+        prev.map((f) => f.id === targetFarmId ? { ...f, nasaPower: freshNasa, slopeDeg: resolvedSrtmSlope } : f)
       );
       setIsFetchingNasa(false);
       showToast(
@@ -632,6 +753,14 @@ export const FarmProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setScreen('auth');
       return;
     }
+    if (nextScreen === 'calendar') {
+      setScreen('dashboard');
+      window.setTimeout(() => {
+        const el = document.getElementById('dashboard-calendar');
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 120);
+      return;
+    }
     setScreen(nextScreen);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -655,102 +784,47 @@ export const FarmProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setScreen('dashboard');
   };
 
-  const loginWithCredentials = (email: string, password: string) => {
+  const loginWithCredentials = async (email: string, password: string) => {
     const cleanEmail = email.trim().toLowerCase();
-    if (!EMAIL_PATTERN.test(cleanEmail)) {
-      return { ok: false, error: 'Please enter a valid email address.' };
-    }
-    if (!password) {
-      return { ok: false, error: 'Please enter your password.' };
-    }
-    const found = accounts.find((a) => a.email.toLowerCase() === cleanEmail);
+    const found = accounts.find((account) => account.email.toLowerCase() === cleanEmail);
     if (!found) {
-      return {
-        ok: false,
-        error: 'No account found with that email. Try Register or the Demo Farmer button below.',
-      };
+      return { ok: false, error: 'No account found with that email. Please check your address or register a new farm.' };
     }
-    if (found.password !== password) {
-      return {
-        ok: false,
-        error: 'Incorrect password. Please try again (Demo password: tadawol123).',
-      };
-    }
-
+    if (found.password !== password) return { ok: false, error: 'Incorrect password. Please try again.' };
     applyAccountSession(found);
     showToast(`Welcome back, ${found.name}!`);
     return { ok: true };
   };
-
-  const loginDemoAccount = () => {
-    const demo =
-      accounts.find((a) => a.email.toLowerCase() === DEFAULT_GLOBAL_PROFILE.email.toLowerCase()) ??
-      createDemoAccount();
-    applyAccountSession(demo);
-    showToast(`Signed in as ${demo.name}.`);
-  };
-
   const registerAccount = async (
     newFarmProfile: Omit<FarmerProfile, 'nasaPower'>,
     password: string
   ) => {
-    const name = newFarmProfile.name.trim();
-    const email = newFarmProfile.email.trim().toLowerCase();
-    const farmName = newFarmProfile.farmName.trim();
-    const credentialError = validateCredentials(email, password);
-    if (credentialError) throw new Error(credentialError);
-    if (!NAME_PATTERN.test(name)) {
-      throw new Error('Full name must contain 2–80 letters and may include spaces, apostrophes, or hyphens.');
-    }
-    if (!FARM_NAME_PATTERN.test(farmName)) {
-      throw new Error('Farm name must contain 2–100 letters or numbers.');
-    }
-    if (newFarmProfile.areaHectares < 5 || newFarmProfile.areaHectares > 200) {
-      throw new Error('Farm area must be between 5 and 200 hectares.');
-    }
-    if (accounts.some((a) => a.email.toLowerCase() === email)) {
-      throw new Error('An account with this email already exists. Please sign in instead.');
-    }
-
     setIsFetchingNasa(true);
-    const liveNasa = await fetchLiveNasaPower(
-      newFarmProfile.coordinates,
-      newFarmProfile.soilType,
-      newFarmProfile.slopeDeg
-    );
+    const liveNasa = await fetchLiveNasaPower(newFarmProfile.coordinates, newFarmProfile.soilType, newFarmProfile.slopeDeg);
     setIsFetchingNasa(false);
-
     const fullProfile: FarmerProfile = {
       ...newFarmProfile,
-      name,
-      email,
-      farmName,
+      slopeDeg:
+        newFarmProfile.slopeOption === 'Auto-detect via SRTM Elevation' && liveNasa.srtmSlopeDeg !== null
+          ? liveNasa.srtmSlopeDeg
+          : newFarmProfile.slopeDeg,
       nasaPower: liveNasa,
     };
     const firstFarm = profileToFarmRecord(fullProfile, `farm-${Date.now().toString(36)}`);
-
     const newAccount: StoredAccount = {
-      email: fullProfile.email,
-      password,
-      name: fullProfile.name,
-      photoDataUrl: fullProfile.photoDataUrl,
-      farms: [firstFarm],
-      activeFarmId: firstFarm.id,
-      updatedAt: new Date().toISOString(),
+      email: fullProfile.email.trim().toLowerCase(), password: password || 'tadawol123',
+      name: fullProfile.name, photoDataUrl: fullProfile.photoDataUrl, farms: [firstFarm],
+      activeFarmId: firstFarm.id, updatedAt: new Date().toISOString(),
     };
-
     setAccounts((prev) => {
-      const next = [newAccount, ...prev];
+      const next = [newAccount, ...prev.filter((account) => account.email.toLowerCase() !== newAccount.email)];
       saveAccounts(next);
       return next;
     });
-
     applyAccountSession(newAccount);
-    showToast(
-      `Farm "${fullProfile.farmName}" registered with ${liveNasa.source === 'nasa-power-live' ? 'live NASA POWER data' : 'calibrated NASA baseline'}!`
-    );
+    showToast(`Farm "${fullProfile.farmName}" registered with ${liveNasa.source === 'nasa-power-live' ? 'live NASA POWER data' : 'calibrated NASA baseline'}!`);
+    return { ok: true };
   };
-
   const logout = () => {
     setCurrentEmail(null);
     setIsChatOpen(false);
@@ -769,6 +843,8 @@ export const FarmProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (updates.countryCode !== undefined) farmUpdates.countryCode = updates.countryCode;
     if (updates.countryName !== undefined) farmUpdates.countryName = updates.countryName;
     if (updates.countryFlag !== undefined) farmUpdates.countryFlag = updates.countryFlag;
+    if (updates.stateName !== undefined) farmUpdates.stateName = updates.stateName;
+    if (updates.localityName !== undefined) farmUpdates.localityName = updates.localityName;
     if (updates.climateZone !== undefined) farmUpdates.climateZone = updates.climateZone;
     if (updates.regionLabel !== undefined) farmUpdates.regionLabel = updates.regionLabel;
     if (updates.coordinates !== undefined) farmUpdates.coordinates = updates.coordinates;
@@ -780,6 +856,7 @@ export const FarmProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (updates.irrigationType !== undefined) farmUpdates.irrigationType = updates.irrigationType;
     if (updates.equipment !== undefined) farmUpdates.equipment = updates.equipment;
     if (updates.previousCrops !== undefined) farmUpdates.previousCrops = updates.previousCrops;
+    if ('financeInputs' in updates) farmUpdates.financeInputs = updates.financeInputs;
 
     if (Object.keys(farmUpdates).length > 0) {
       await updateActiveFarm(farmUpdates);
@@ -790,14 +867,129 @@ export const FarmProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const buildStrategyHistoryRecord = (params: {
+    baseStrategy: ScoredRotationStrategy;
+    nextCustom?: PlanCustomization;
+    prevTitle?: string;
+    source: StrategyChangeRecord['source'];
+    actionType: StrategyChangeRecord['actionType'];
+    summary: string;
+  }): StrategyChangeRecord => {
+    const resolved = applyPlanCustomization(params.baseStrategy, params.nextCustom);
+    return {
+      id: `sh-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      recordedAt: new Date().toISOString(),
+      source: params.source,
+      actionType: params.actionType,
+      summary: params.summary,
+      fromStrategyTitle: params.prevTitle,
+      strategyId: resolved.id,
+      strategyTitle: resolved.title,
+      tierLabel: resolved.tierLabel,
+      focusTag: resolved.focusTag,
+      stages: resolved.steps.map((st, idx) => ({
+        cropName: st.cropName,
+        cropFamily: st.cropFamily,
+        cropColor: st.cropColor,
+        durationMonths:
+          params.nextCustom?.stageOverrides?.[idx]?.durationMonths ??
+          params.nextCustom?.customStages?.[idx]?.durationMonths,
+      })),
+      metrics: {
+        yieldImprovementPct: resolved.expectedOutput.yieldImprovementPct,
+        chemicalReductionPct: resolved.expectedOutput.chemicalReductionPct,
+        waterSavingsPct: resolved.expectedOutput.waterSavingsPct,
+      },
+    };
+  };
+
   const selectRotationStrategy = (strategyId: string | null) => {
-    mutateActiveFarm((f) => ({ ...f, selectedStrategyId: strategyId }));
+    mutateActiveFarm((f) => {
+      const nextCustom =
+        strategyId && strategyId !== f.selectedStrategyId ? undefined : f.planCustomization;
+      let nextHistory = f.strategyHistory ?? [];
+
+      if (strategyId) {
+        const picked = top3Strategies.find((s) => s.id === strategyId);
+        if (picked) {
+          const prevBase =
+            top3Strategies.find((s) => s.id === f.selectedStrategyId) ?? top3Strategies[0];
+          const prevResolved = f.selectedStrategyId
+            ? applyPlanCustomization(prevBase, f.planCustomization)
+            : undefined;
+          const hadAnyPrev = Boolean(f.selectedStrategyId) || nextHistory.length > 0;
+          const isSameNoChange =
+            f.selectedStrategyId === strategyId && !f.planCustomization && nextHistory.length > 0;
+
+          if (!isSameNoChange) {
+            const record = buildStrategyHistoryRecord({
+              baseStrategy: picked,
+              nextCustom,
+              prevTitle: prevResolved?.title,
+              source: 'rotation-lab',
+              actionType: hadAnyPrev ? 'strategy-switch' : 'initial-selection',
+              summary: hadAnyPrev
+                ? `Switched strategy to ${picked.title}`
+                : `Selected initial strategy: ${picked.title}`,
+            });
+            nextHistory = [...nextHistory, record].slice(-20);
+          }
+        }
+      }
+
+      return {
+        ...f,
+        selectedStrategyId: strategyId,
+        planCustomization: nextCustom,
+        strategyHistory: nextHistory,
+      };
+    });
     if (strategyId) {
       const picked = top3Strategies.find((s) => s.id === strategyId);
       if (picked) {
         showToast(`Selected ${picked.tierLabel}: "${picked.title}"`);
       }
     }
+  };
+
+  const resetPlanCustomization = () => {
+    mutateActiveFarm((f) => {
+      const baseStrategy =
+        top3Strategies.find((s) => s.id === f.selectedStrategyId) ?? top3Strategies[0];
+      const prevResolved = applyPlanCustomization(baseStrategy, f.planCustomization);
+      const record = buildStrategyHistoryRecord({
+        baseStrategy,
+        nextCustom: undefined,
+        prevTitle: prevResolved.title,
+        source: 'reset',
+        actionType: 'reset',
+        summary: `Restored baseline "${baseStrategy.title}"`,
+      });
+      return {
+        ...f,
+        planCustomization: undefined,
+        strategyHistory: [...(f.strategyHistory ?? []), record].slice(-20),
+      };
+    });
+    showToast('Restored original Rotation Lab sequence and timing.');
+  };
+
+  const openAiAdvisorForCustomPlan = () => {
+    setIsChatOpen(true);
+    const ts = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    setChatMessages((prev) => {
+      const last = prev[prev.length - 1];
+      if (last && last.id.startsWith('custom-prompt-')) return prev;
+      return [
+        ...prev,
+        {
+          id: `custom-prompt-${Date.now()}`,
+          role: 'assistant',
+          content: `Ready to customize **${activeStrategy.title}** or design your own strategy beyond the 3 presets! Try asking:\n\n• *"Build me a custom 5-stage plan with Wheat, Chickpeas, Tomatoes, Oats, and Clover"*\n• *"Add a 5th stage with Summer Cover Crop"*\n• *"Swap Stage 2 to Artichokes for 5 months"*\n• *"Heavy rain delayed sowing by 1 month"*\n\nI will show you a preview and always ask for your confirmation before applying any change.`,
+          timestamp: ts,
+        },
+      ];
+    });
   };
 
   const toggleCalendarComplete = (eventId: string) => {
@@ -825,45 +1017,323 @@ export const FarmProvider: React.FC<{ children: React.ReactNode }> = ({ children
     showToast(`Added "${created.title}" to "${activeFarm.farmName}" Calendar.`);
   };
 
+  const saveFarmFinanceInputs = (inputs: FarmerFinanceInputs | undefined) => {
+    mutateActiveFarm((f) => ({
+      ...f,
+      financeInputs: inputs,
+    }));
+    showToast(
+      inputs?.enabled
+        ? 'Planning costs saved. Profit graphs updated.'
+        : 'Optional profit calculator cleared.'
+    );
+  };
+
+  const applyProposalToFarm = (proposal: PendingPlanProposal) => {
+    if (
+      proposal.nextSelectedStrategyId !== undefined ||
+      proposal.nextCustomization !== undefined ||
+      proposal.calendarAlert
+    ) {
+      const nowDate = new Date();
+      const alertMonth = nowDate.getMonth() + 1;
+      const alertSeason: CalendarEvent['season'] =
+        alertMonth >= 3 && alertMonth <= 5
+          ? 'Spring'
+          : alertMonth >= 6 && alertMonth <= 8
+            ? 'Summer'
+            : alertMonth >= 9 && alertMonth <= 11
+              ? 'Autumn'
+              : 'Winter';
+
+      mutateActiveFarm((f) => {
+        const nextCustomEvents: CalendarEvent[] = proposal.calendarAlert
+          ? [
+              ...(f.customCalendarEvents ?? []),
+              {
+                id: `ai-ev-${Date.now()}`,
+                date: nowDate.toISOString().slice(0, 10),
+                year: nowDate.getFullYear(),
+                month: alertMonth,
+                season: alertSeason,
+                phase: 'current',
+                category: proposal.calendarAlert.category,
+                title: proposal.calendarAlert.title,
+                description: proposal.calendarAlert.description,
+                isCustom: true,
+              },
+            ]
+          : f.customCalendarEvents;
+
+        const nextStrategyId =
+          proposal.nextSelectedStrategyId !== undefined
+            ? proposal.nextSelectedStrategyId
+            : f.selectedStrategyId ?? top3Strategies[0]?.id ?? null;
+
+        const nextCustomization =
+          proposal.nextCustomization === null
+            ? undefined
+            : proposal.nextCustomization !== undefined
+              ? proposal.nextCustomization
+              : f.planCustomization;
+
+        const prevBase =
+          top3Strategies.find((s) => s.id === f.selectedStrategyId) ?? top3Strategies[0];
+        const prevResolved = f.selectedStrategyId
+          ? applyPlanCustomization(prevBase, f.planCustomization)
+          : undefined;
+        const nextBase =
+          top3Strategies.find((s) => s.id === nextStrategyId) ?? top3Strategies[0];
+
+        const historyRecord = buildStrategyHistoryRecord({
+          baseStrategy: nextBase,
+          nextCustom: nextCustomization,
+          prevTitle: prevResolved?.title,
+          source: proposal.nextCustomization === null ? 'reset' : 'ai-advisor',
+          actionType:
+            proposal.nextCustomization === null
+              ? 'reset'
+              : proposal.changeType === 'strategy-switch'
+                ? 'strategy-switch'
+                : proposal.changeType === 'custom-plan'
+                  ? 'custom-plan'
+                  : 'stage-edit',
+          summary: proposal.summary,
+        });
+
+        return {
+          ...f,
+          selectedStrategyId: nextStrategyId,
+          planCustomization: nextCustomization,
+          customCalendarEvents: nextCustomEvents,
+          strategyHistory: [...(f.strategyHistory ?? []), historyRecord].slice(-20),
+        };
+      });
+    }
+
+    if (proposal.nextScenario) {
+      updateContractSettings({
+        scenario: proposal.nextScenario,
+        rain_change_pct:
+          proposal.nextScenario === 'drought' ? -22 : proposal.nextScenario === 'wet' ? 20 : 0,
+      });
+    }
+
+    showToast(`Plan updated: ${proposal.summary}`);
+  };
+
+  const confirmPlanProposal = (messageId: string) => {
+    const targetMsg = chatMessages.find(
+      (m) => m.id === messageId && m.pendingProposal?.status === 'pending'
+    );
+    if (!targetMsg?.pendingProposal) return;
+
+    const proposal = targetMsg.pendingProposal;
+    applyProposalToFarm(proposal);
+
+    const ts = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    setChatMessages((prev) => [
+      ...prev.map((m) =>
+        m.id === messageId && m.pendingProposal
+          ? {
+              ...m,
+              planChangeSummary: proposal.summary,
+              pendingProposal: { ...m.pendingProposal, status: 'applied' as const },
+            }
+          : m
+      ),
+      {
+        id: `a-applied-${Date.now()}`,
+        role: 'assistant',
+        content: `Confirmed and applied **${proposal.summary}**! Your Dashboard Roadmap, Calendar, and 5-Year Outlook are now updated.`,
+        timestamp: ts,
+      },
+    ]);
+  };
+
+  const cancelPlanProposal = (messageId: string) => {
+    const targetMsg = chatMessages.find(
+      (m) => m.id === messageId && m.pendingProposal?.status === 'pending'
+    );
+    if (!targetMsg?.pendingProposal) return;
+
+    const ts = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    setChatMessages((prev) => [
+      ...prev.map((m) =>
+        m.id === messageId && m.pendingProposal
+          ? {
+              ...m,
+              pendingProposal: { ...m.pendingProposal, status: 'cancelled' as const },
+            }
+          : m
+      ),
+      {
+        id: `a-cancel-${Date.now()}`,
+        role: 'assistant',
+        content: `No changes were made to your active rotation plan. Let me know if you want to explore a different crop or custom stage layout!`,
+        timestamp: ts,
+      },
+    ]);
+  };
+
   const sendChatMessage = async (text: string) => {
     const trimmed = text.trim();
-    if (!trimmed) return;
+    if (!trimmed || chatThinkingRef.current) return;
     const ts = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
     const userMsg: ChatMessage = {
-      id: `u-${Date.now()}`,
+      id: `u-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       role: 'user',
       content: trimmed,
       timestamp: ts,
     };
 
-    const history = chatMessages
-      .filter((message) => message.role === 'user' || message.role === 'assistant')
-      .slice(-8)
-      .map((message) => ({ role: message.role, content: message.content }));
+    const historySnapshot = [...chatMessages];
+    const latestPendingMsg = [...historySnapshot]
+      .reverse()
+      .find((m) => m.pendingProposal?.status === 'pending');
+
+    // Handle explicit typed cancellation of a pending proposal
+    if (
+      latestPendingMsg?.pendingProposal &&
+      /^(no|nope|cancel|reject|stop|nevermind|never mind|non|annuler|لا)\b[!.?,\s]*$/i.test(
+        trimmed
+      )
+    ) {
+      setChatMessages((prev) => [
+        ...prev.map((m) =>
+          m.id === latestPendingMsg.id && m.pendingProposal
+            ? { ...m, pendingProposal: { ...m.pendingProposal, status: 'cancelled' as const } }
+            : m
+        ),
+        userMsg,
+        {
+          id: `a-cancel-${Date.now()}`,
+          role: 'assistant',
+          content: `Cancelled that proposed update, your current rotation plan remains untouched. Tell me what else you would like to try on **${profile.farmName}**.`,
+          timestamp: ts,
+        },
+      ]);
+      return;
+    }
+
+    // Handle explicit typed confirmation of a pending proposal
+    if (
+      latestPendingMsg?.pendingProposal &&
+      /^(yes|yep|yeah|confirm|apply|confirm apply|yes apply|go ahead|oui|confirmer|نعم|ey)\b[!.?,\s]*$/i.test(
+        trimmed
+      )
+    ) {
+      const prop = latestPendingMsg.pendingProposal;
+      const isStrongConfirm = /confirm\s*apply|yes\s*apply/i.test(trimmed);
+      if (prop.requiresDoubleConfirm && !isStrongConfirm) {
+        setChatMessages((prev) => [
+          ...prev,
+          userMsg,
+          {
+            id: `a-dbl-${Date.now()}`,
+            role: 'assistant',
+            content: `Because **${prop.summary}** changes your active strategy structure, please use the **2-step Confirm button** on the proposal card above (or reply **CONFIRM APPLY**) to lock it in.`,
+            timestamp: ts,
+          },
+        ]);
+        return;
+      }
+
+      applyProposalToFarm(prop);
+      setChatMessages((prev) => [
+        ...prev.map((m) =>
+          m.id === latestPendingMsg.id && m.pendingProposal
+            ? {
+                ...m,
+                planChangeSummary: prop.summary,
+                pendingProposal: { ...m.pendingProposal, status: 'applied' as const },
+              }
+            : m
+        ),
+        userMsg,
+        {
+          id: `a-applied-${Date.now()}`,
+          role: 'assistant',
+          content: `Confirmed and applied **${prop.summary}**! Your Dashboard Roadmap, Calendar, and 5-Year Outlook are now updated.`,
+          timestamp: ts,
+        },
+      ]);
+      return;
+    }
+
     setChatMessages((prev) => [...prev, userMsg]);
+    chatThinkingRef.current = true;
+    setIsChatThinking(true);
+
     try {
-      const result = await askAdvisor(trimmed, profile, activeStrategy, history);
+      const result = await Promise.race([
+        askGrokAdvisor({
+          question: trimmed,
+          history: historySnapshot,
+          profile,
+          activeStrategy,
+          top3: top3Strategies,
+          selectedStrategyId,
+          planCustomization,
+          currentScreen: screen,
+          serverGrokConfigured: serverAiConfigured,
+        }),
+        new Promise<never>((_, reject) =>
+          window.setTimeout(() => reject(new Error('Response timed out')), 18000)
+        ),
+      ]);
+
+      const replyTs = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const aiMsg: ChatMessage = {
+        id: `a-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        role: 'assistant',
+        content:
+          result.reply && result.reply.trim().length > 0
+            ? result.reply
+            : 'How can I help with your crops or rotation plan today?',
+        timestamp: replyTs,
+        pendingProposal: result.pendingProposal,
+      };
+
+      setChatMessages((prev) => [...prev, aiMsg]);
+    } catch (err) {
+      console.error('Tadawol AI Advisor error:', err);
+      const replyTs = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      let fallbackReply =
+        'I ran into a brief connection hiccup. Please ask your farm or rotation question again in a moment!';
+      let fallbackProposal: PendingPlanProposal | undefined;
+      try {
+        const safeOffline = buildSmartOfflineReply(
+          trimmed,
+          historySnapshot,
+          profile,
+          activeStrategy,
+          top3Strategies,
+          selectedStrategyId,
+          planCustomization,
+          screen
+        );
+        if (safeOffline.reply) {
+          fallbackReply = safeOffline.reply;
+          fallbackProposal = safeOffline.pendingProposal;
+        }
+      } catch {
+        // keep safe fallbackReply
+      }
       setChatMessages((prev) => [
         ...prev,
         {
-          id: `a-${Date.now() + 1}`,
+          id: `a-err-${Date.now()}`,
           role: 'assistant',
-          content: result.answer,
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          content: fallbackReply,
+          timestamp: replyTs,
+          pendingProposal: fallbackProposal,
         },
       ]);
-    } catch (error) {
-      setChatMessages((prev) => [
-        ...prev,
-        {
-          id: `a-${Date.now() + 1}`,
-          role: 'assistant',
-          content: 'The Groq advisor is unavailable. Please try again later.',
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        },
-      ]);
-      showToast(error instanceof Error ? error.message : 'Advisor API unavailable.');
+    } finally {
+      chatThinkingRef.current = false;
+      setIsChatThinking(false);
     }
   };
 
@@ -896,7 +1366,7 @@ export const FarmProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setRemoteOverrideResponse(null);
       if (result.error) {
         setLastApiError(result.error);
-        showToast(`API unreachable (${result.error}) — using local simulator.`);
+        showToast(`API unreachable (${result.error}). Using local simulator.`);
       } else {
         showToast('Using local contract simulator (no remote URL configured).');
       }
@@ -926,13 +1396,21 @@ export const FarmProvider: React.FC<{ children: React.ReactNode }> = ({ children
         top3Strategies,
         selectedStrategyId,
         activeStrategy,
+        planCustomization,
+        strategyHistory: activeFarm.strategyHistory ?? [],
+        resetPlanCustomization,
         calendarEvents,
         toggleCalendarComplete,
         addCalendarEvent,
         isChatOpen,
         setIsChatOpen,
+        openAiAdvisorForCustomPlan,
         chatMessages,
+        isChatThinking,
+        aiProviderLabel,
         sendChatMessage,
+        confirmPlanProposal,
+        cancelPlanProposal,
         isDataSourcesOpen,
         setIsDataSourcesOpen,
         contractSettings,
@@ -948,12 +1426,12 @@ export const FarmProvider: React.FC<{ children: React.ReactNode }> = ({ children
         toastMessage,
         navigate,
         loginWithCredentials,
-        loginDemoAccount,
         registerAccount,
         logout,
         updateProfile,
         refreshLiveNasaData,
         selectRotationStrategy,
+        saveFarmFinanceInputs,
         showToast,
       }}
     >

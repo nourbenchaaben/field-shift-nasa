@@ -36,11 +36,23 @@ export interface DataSourceLink {
   url: string;
 }
 
+export interface MarketFinanceDatasetSpec {
+  id: string;
+  name: string;
+  coverage: string;
+  provider: string;
+  variables: string;
+  period: string;
+  usedFor: string;
+  limitation: string;
+  links: { label: string; url: string }[];
+}
+
 export interface DataSourceEntry {
   id: string;
   name: string;
   agency: string;
-  phase: 'phase1' | 'phase2' | 'phase3-nasa' | 'phase3-partner' | 'phase3-regional';
+  phase: 'phase1' | 'phase2' | 'phase-market' | 'phase3-nasa' | 'phase3-partner' | 'phase3-regional';
   statusBadge: string;
   farmerBenefit: string;
   links: DataSourceLink[];
@@ -147,6 +159,106 @@ export const NON_SATELLITE_INPUTS: NonSatelliteInputSpec[] = [
     usedFor: 'Scoring how each crop responds to NASA climate & wetness conditions',
     limitation: 'Generic and illustrative until verified by a local agronomist or extension office.',
   },
+  {
+    input: 'Regional Market & Farm Finance Benchmarks',
+    origin: 'Verified 2025-2026 official quotes (World Bank, USDA, EC/TESEO, ODC, ONICL, MinAg, CACP, AGRA) + editable local price overrides',
+    usedFor: 'Comparing rotation net profit, fertilizer cash savings, break-even yields & subsidies',
+    limitation: 'Regional reference averages; non-quoted local crops and cultivation costs are editable estimates.',
+  },
+];
+
+/**
+ * 2B. Verified 2025-2026 Agricultural Market, Input Cost & Subsidy Datasets
+ */
+export const MARKET_FINANCE_DATASETS: MarketFinanceDatasetSpec[] = [
+  {
+    id: 'world-bank-pink-sheet',
+    name: 'World Bank Commodity Markets Pink Sheet',
+    coverage: 'Global Benchmarks (42 Countries)',
+    provider: 'World Bank Prospects Group',
+    variables: 'DAP ($803.1/t), Urea ($407.5/t, Q2 peak $693.5/t), Soybeans ($515/t), Maize ($226.5/t), US HRW Wheat ($286/t)',
+    period: 'Oct-Nov 2026',
+    usedFor: 'Global fertilizer input pricing, export grain/oilseed anchors, and fertilizer cash-saving calculations',
+    limitation: 'International FOB/spot benchmarks; local farmgate prices differ by transport, currency & subsidies.',
+    links: [
+      {
+        label: 'Pink Sheet (Nov 2026 PDF)',
+        url: 'https://thedocs.worldbank.org/en/doc/74e8be41ceb20fa0da750cda2f6b9e4e-0050012026/related/CMO-Pink-Sheet-November-2026.pdf',
+      },
+      {
+        label: 'World Bank Commodity Markets',
+        url: 'https://www.worldbank.org/en/research/commodity-markets',
+      },
+    ],
+  },
+  {
+    id: 'usda-fas-nass-2026',
+    name: 'USDA NASS Agricultural Prices & FAS GAIN Reports',
+    coverage: 'USA, Tunisia, Kenya, Brazil & Argentina',
+    provider: 'U.S. Department of Agriculture (NASS / FAS)',
+    variables: 'US corn ($4.11-4.15/bu), soybeans ($10.20-10.60/bu), wheat ($4.90-5.12/bu), sorghum ($6.23/cwt), chickpeas ($31-33.30/cwt); Tunisia durum (1,300-1,400 TND/t) & barley (800-900 TND/t); Kenya wheat (KSh 52,778/t); Brazil ($229/t) & Argentina ($212/t) maize',
+    period: 'Feb-May 2026 (MY 2025/26-2026/27)',
+    usedFor: 'National farmgate grain/pulse reference prices, procurement floors & regional market outlooks',
+    limitation: 'National/state monthly averages; individual buyer contracts vary by grade and harvest month.',
+    links: [
+      {
+        label: 'USDA NASS Prices (Mar 2026)',
+        url: 'https://esmis.nal.usda.gov/sites/default/release-files/795838/agpr0326.pdf',
+      },
+      {
+        label: 'USDA FAS Tunisia Grain (TS2026-0004)',
+        url: 'https://www.fas.usda.gov/data/gain-report/2026/04/Grain%20and%20Feed%20Annual_Tunis_Tunisia_TS2026-0004.pdf',
+      },
+      {
+        label: 'USDA FAS World Grain (May 2026)',
+        url: 'https://www.fas.usda.gov/sites/default/files/2026-05/grain.pdf',
+      },
+    ],
+  },
+  {
+    id: 'eu-ec-teseo-2026',
+    name: 'EU-27 Cereals Market Group & TESEO/CLAL Oilseeds',
+    coverage: 'European Union (FR, DE, ES, IT, PL, RO, NL, PT, GR)',
+    provider: 'European Commission DG AGRI / TESEO CLAL',
+    variables: 'Milling wheat (€184-209/t), Italian durum (€263-275/t), FR maize (€188-215/t), rapeseed (€492-570/t), sunflower (€525.66/t), CAP Eco-Scheme rotation bonuses',
+    period: '2026 (through Nov 2026)',
+    usedFor: 'European cereal/oilseed crop pricing and EU CAP crop-diversification payment estimates',
+    limitation: 'Wholesale port/regional reference quotations; CAP Eco-Scheme rates vary by member state.',
+    links: [
+      {
+        label: 'EC Cereals Market PDF',
+        url: 'https://circabc.europa.eu/sd/a/92653d37-7fff-40c1-8d5e-b6bb3625c04a/EU%20cereals%20market.pdf',
+      },
+      {
+        label: 'TESEO EU Oilseeds',
+        url: 'https://teseo.clal.it/en/?section=oilseeds-price-eu',
+      },
+    ],
+  },
+  {
+    id: 'mena-asia-africa-procurement-2026',
+    name: 'National Procurement & Floor Prices (ONICL, Egypt MinAg, India MSP, AGRA)',
+    coverage: 'Morocco, Egypt, India & East/Southern Africa',
+    provider: 'Morocco ONICL, Egypt Ministry of Agriculture, India CACP, AGRA',
+    variables: 'Morocco soft wheat (258.8-270 MAD/q); Egypt wheat (EGP 2,500/ardeb) & subsidized urea (EGP 4,500/t); India 2026-27 MSPs (wheat ₹2,585/q, mustard ₹6,200/q, gram ₹5,650/q, soybean ₹5,328/q); Kenya NCPB maize (KSh 4,000/90kg) & Ethiopia wheat ($520/t)',
+    period: '2025-Nov 2026',
+    usedFor: 'Guaranteed state price floors, input subsidies, and farmgate comparison across MENA, South Asia & Africa',
+    limitation: 'Official floor/wholesale prices; farmer eligibility for state procurement or subsidized bags depends on local quotas.',
+    links: [
+      {
+        label: 'Egypt MinAg Briefing (Nov 2026)',
+        url: 'https://dailynewsegypt.com/2026/11/10/egypts-wheat-output-reaches-11m-tonnes-agriculture-minister-tells-senate/',
+      },
+      {
+        label: 'AGRA Food Security Monitor (2026)',
+        url: 'https://agra.org/wp-content/uploads/2026/04/Food-Security-Monitor_March-2026_Final.pdf',
+      },
+      {
+        label: 'India MSP 2026-27 Rates',
+        url: 'https://www.global-agriculture.com/india-region/wheat-msp-raised-by-%E2%82%B9160-will-indian-farmers-be-satisfied/',
+      },
+    ],
+  },
 ];
 
 /**
@@ -215,7 +327,7 @@ export const NOT_USED_IN_LIVE_BACKEND: ConsideredNotUsedSpec[] = [
   },
   {
     dataset: 'Landsat, VIIRS, Sentinel-2',
-    reasonNotUsed: 'Redundant with MODIS MOD13Q1 for v1 demo; candidates for finer 10–30 m field detail later.',
+    reasonNotUsed: 'Redundant with MODIS MOD13Q1 in v1; candidates for finer 10–30 m field detail later.',
     links: [
       { label: 'ESA Sentinel-2', url: 'https://sentiwiki.copernicus.eu/web/s2-mission' },
     ],
@@ -431,6 +543,67 @@ export const DATA_SOURCES_REGISTRY: DataSourceEntry[] = [
       { label: 'PRISM Climate', url: 'https://prism.oregonstate.edu/' },
       { label: 'CoCoRaHS', url: 'https://www.cocorahs.org/' },
       { label: 'USGS Water (NWIS)', url: 'https://waterdata.usgs.gov/nwis' },
+    ],
+  },
+  {
+    id: 'world-bank-markets-portal',
+    name: 'World Bank Commodity Markets Pink Sheet (2026)',
+    agency: 'World Bank Prospects Group',
+    phase: 'phase-market',
+    statusBadge: 'Active · Market & Finance',
+    farmerBenefit:
+      'Monthly global fertilizer (DAP, Urea) and grain/oilseed (Soybeans, Maize, Wheat) benchmarks.',
+    links: [
+      {
+        label: 'Nov 2026 Pink Sheet PDF',
+        url: 'https://thedocs.worldbank.org/en/doc/74e8be41ceb20fa0da750cda2f6b9e4e-0050012026/related/CMO-Pink-Sheet-November-2026.pdf',
+      },
+      {
+        label: 'Commodity Markets Portal',
+        url: 'https://www.worldbank.org/en/research/commodity-markets',
+      },
+    ],
+  },
+  {
+    id: 'eu-teseo-markets-portal',
+    name: 'EC Cereals Market Group & TESEO EU Oilseeds (2026)',
+    agency: 'European Commission / TESEO CLAL',
+    phase: 'phase-market',
+    statusBadge: 'Active · Market & Finance',
+    farmerBenefit:
+      'EU-27 wheat, durum, maize, rapeseed, and sunflower wholesale prices plus CAP Eco-Schemes.',
+    links: [
+      {
+        label: 'EC Cereals PDF',
+        url: 'https://circabc.europa.eu/sd/a/92653d37-7fff-40c1-8d5e-b6bb3625c04a/EU%20cereals%20market.pdf',
+      },
+      {
+        label: 'TESEO Oilseeds',
+        url: 'https://teseo.clal.it/en/?section=oilseeds-price-eu',
+      },
+    ],
+  },
+  {
+    id: 'regional-agencies-markets-portal',
+    name: 'USDA FAS/NASS, ODC, ONICL, Egypt MinAg, India MSP & AGRA (2026)',
+    agency: 'National Agricultural Ministries & USDA',
+    phase: 'phase-market',
+    statusBadge: 'Active · Market & Finance',
+    farmerBenefit:
+      'Regional 2025-2026 farmgate prices, state grain procurement floors, and fertilizer subsidies.',
+    links: [
+      {
+        label: 'USDA NASS Prices (2026)',
+        url: 'https://esmis.nal.usda.gov/sites/default/release-files/795838/agpr0326.pdf',
+      },
+      {
+        label: 'Tunisia GAIN (TS2026-0004)',
+        url: 'https://www.fas.usda.gov/data/gain-report/2026/04/Grain%20and%20Feed%20Annual_Tunis_Tunisia_TS2026-0004.pdf',
+      },
+      {
+        label: 'AGRA Monitor (2026)',
+        url: 'https://agra.org/wp-content/uploads/2026/04/Food-Security-Monitor_March-2026_Final.pdf',
+      },
     ],
   },
   {

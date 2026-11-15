@@ -11,6 +11,8 @@ npm run dev
 
 Open `http://localhost:5173` in your browser.
 
+Account sign-in is local to this browser and stored in `localStorage`. Accounts and passwords do not sync across browsers or devices.
+
 To build for production:
 
 ```bash

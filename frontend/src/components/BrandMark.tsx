@@ -1,4 +1,5 @@
 import React from 'react';
+import { useTheme } from '../context/ThemeContext';
 
 interface BrandMarkProps {
   size?: number;
@@ -8,48 +9,102 @@ interface BrandMarkProps {
 }
 
 export const BrandMark: React.FC<BrandMarkProps> = ({
-  size = 34,
+  size = 38,
   showWordmark = true,
   darkText = true,
   subtitle,
 }) => {
+  const { isDark } = useTheme();
+  const useLightText = !darkText || isDark;
+  const leafLeft = !useLightText ? '#00873A' : '#44BE7E';
+  const leafRight = !useLightText ? '#44BE7E' : '#92D500';
+  const stemColor = !useLightText ? '#00873A' : '#44BE7E';
+  const veinColor = !useLightText ? '#FFFEFB' : '#111111';
+
   return (
     <div className="inline-flex items-center gap-2.5 select-none">
-      {/* Geometric interlocking 3-arc crop rotation + satellite node mark inspired by transform-rotations.eu */}
+      {/* 4-arrow circular crop rotation mark in Tadawol website palette with botanical sprout center */}
       <svg
         width={size}
         height={size}
-        viewBox="0 0 36 36"
+        viewBox="0 0 100 100"
         fill="none"
         xmlns="http://www.w3.org/2000/svg"
         className="shrink-0"
         aria-hidden="true"
       >
-        {/* Golden harvest upper-right arc block */}
+        {/* 4 curved clockwise rotation shafts */}
         <path
-          d="M19 2V9.2C14.2 9.2 10.1 11.9 8.1 15.8H11.5C13.2 13.3 15.9 11.7 19 11.7V16H33V2H19Z"
-          fill="#EBB40E"
-        />
-        {/* Prairie lime left-side cycle block */}
-        <path
-          d="M7.6 19.6C7.6 18.1 7.9 16.7 8.5 15.4H2V23.8H8.2C9.4 26.8 11.8 29.1 14.9 30.3V28C10.9 26.4 7.6 23.4 7.6 19.6Z"
-          fill="#92D500"
-        />
-        {/* Forest green lower-right anchor & inner soil node */}
-        <path
-          d="M19 28.4C17.4 28.4 16 28.1 14.7 27.6V34H25.2V28.4H19Z"
+          d="M 11.59 52.69 A 38.5 38.5 0 0 1 47.99 11.55 L 48.67 24.53 A 25.5 25.5 0 0 0 24.56 51.78 Z"
           fill="#00873A"
         />
-        {/* Orbital satellite telemetry dot */}
-        <circle cx="26.5" cy="22" r="4.2" fill="#00873A" />
-        <circle cx="26.5" cy="22" r="1.7" fill="#FFFEFB" />
+        <path
+          d="M 47.31 11.59 A 38.5 38.5 0 0 1 88.45 47.99 L 75.47 48.67 A 25.5 25.5 0 0 0 48.22 24.56 Z"
+          fill="#44BE7E"
+        />
+        <path
+          d="M 88.41 47.31 A 38.5 38.5 0 0 1 52.01 88.45 L 51.33 75.47 A 25.5 25.5 0 0 0 75.44 48.22 Z"
+          fill="#92D500"
+        />
+        <path
+          d="M 52.69 88.41 A 38.5 38.5 0 0 1 11.55 52.01 L 24.53 51.33 A 25.5 25.5 0 0 0 51.78 75.44 Z"
+          fill="#EBB40E"
+        />
+
+        {/* Interlocking overlap chevron shadows */}
+        <path
+          d="M 47.99 11.55 A 38.5 38.5 0 0 1 54.18 11.73 L 60.70 18.00 L 53.66 24.76 A 25.5 25.5 0 0 0 48.67 24.53 Z"
+          fill="#2C9B61"
+        />
+        <path
+          d="M 88.45 47.99 A 38.5 38.5 0 0 1 88.27 54.18 L 82.00 60.70 L 75.24 53.66 A 25.5 25.5 0 0 0 75.47 48.67 Z"
+          fill="#75AD00"
+        />
+        <path
+          d="M 52.01 88.45 A 38.5 38.5 0 0 1 45.82 88.27 L 39.30 82.00 L 46.34 75.24 A 25.5 25.5 0 0 0 51.33 75.47 Z"
+          fill="#C69304"
+        />
+        <path
+          d="M 11.55 52.01 A 38.5 38.5 0 0 1 11.73 45.82 L 18.00 39.30 L 24.76 46.34 A 25.5 25.5 0 0 0 24.53 51.33 Z"
+          fill="#00642A"
+        />
+
+        {/* 4 directional arrowheads */}
+        <path d="M 44.50 5.50 L 57.50 18.00 L 44.50 30.50 Z" fill="#00873A" />
+        <path d="M 94.50 44.50 L 82.00 57.50 L 69.50 44.50 Z" fill="#44BE7E" />
+        <path d="M 55.50 94.50 L 42.50 82.00 L 55.50 69.50 Z" fill="#92D500" />
+        <path d="M 5.50 55.50 L 18.00 42.50 L 30.50 55.50 Z" fill="#EBB40E" />
+
+        {/* Center botanical sprout / plant leaves */}
+        <path
+          d="M 48.6 66.2 C 48.6 61.5 48.9 57.2 49.5 53.5 L 51.4 53.5 C 51.0 57.5 51.3 61.5 51.4 66.2 C 51.4 67.3 48.6 67.3 48.6 66.2 Z"
+          fill={stemColor}
+        />
+        <path
+          d="M 49.5 58.6 C 41.0 59.0 34.0 53.4 33.8 44.4 C 42.6 43.8 49.4 49.2 49.5 58.6 Z"
+          fill={leafLeft}
+        />
+        <path
+          d="M 48.3 57.2 C 44.6 53.4 41.2 50.3 37.6 47.4 C 41.6 49.5 45.2 52.5 48.8 56.4 Z"
+          fill={veinColor}
+          opacity="0.72"
+        />
+        <path
+          d="M 50.4 55.2 C 50.0 45.0 56.6 38.0 66.4 38.4 C 66.2 48.0 59.4 55.4 50.4 55.2 Z"
+          fill={leafRight}
+        />
+        <path
+          d="M 51.6 53.8 C 55.6 49.4 59.4 45.8 63.2 42.4 C 59.0 44.9 55.0 48.5 51.1 52.9 Z"
+          fill={veinColor}
+          opacity="0.72"
+        />
       </svg>
 
       {showWordmark && (
         <div className="flex flex-col leading-none">
           <span
             className={`text-[1.25rem] font-extrabold tracking-[-0.03em] ${
-              darkText ? 'text-[#111111]' : 'text-white'
+              !useLightText ? 'text-[#111111]' : 'text-white'
             }`}
           >
             Tadawol
@@ -57,7 +112,7 @@ export const BrandMark: React.FC<BrandMarkProps> = ({
           {subtitle && (
             <span
               className={`text-[10px] font-semibold uppercase tracking-[0.12em] mt-0.5 ${
-                darkText ? 'text-[#00873A]' : 'text-[#92D500]'
+                !useLightText ? 'text-[#00873A]' : 'text-[#92D500]'
               }`}
             >
               {subtitle}

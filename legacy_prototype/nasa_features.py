@@ -12,14 +12,18 @@ Datasets used:
    https://developers.google.com/earth-engine/datasets and fix the constants below if needed.
 """
 import json
-import json
 import os
+from pathlib import Path
 
 import ee
 import pandas as pd
+from dotenv import load_dotenv
 
+# This module may be imported while FastAPI is launched from either the repo
+# root or backend/.env configuration. Resolve configuration before PROJECT.
+load_dotenv()
 PROJECT = os.environ.get("GEE_PROJECT")
-CACHE_DIR = "cache"
+CACHE_DIR = str(Path(__file__).resolve().parents[1] / "cache")
 
 NDVI_ID, NDVI_BAND = "MODIS/061/MOD13Q1", "NDVI"
 SMAP_ID, SMAP_BAND = "NASA/SMAP/SPL4SMGP/008", "sm_rootzone_wetness"
@@ -56,6 +60,8 @@ def _monthly(col_id, band, area, scale, y0, y1, how="mean", factor=1.0):
     fc = ee.FeatureCollection(ee.List.sequence(0, n_months - 1).map(per_month))
     fc = fc.filter(ee.Filter.notNull(["v"]))
     rows = [f["properties"] for f in fc.getInfo()["features"]]
+    if not rows:
+        return pd.Series(dtype=float)
     s = pd.DataFrame(rows)
     s["date"] = pd.to_datetime(s["date"])
     return (s.set_index("date")["v"] * factor).sort_index()
@@ -80,7 +86,7 @@ def get_features(lat, lon, y0=2018, y1=2024, buffer_m=1000):
     elev = srtm.reduceRegion(ee.Reducer.mean(), area, 30).get("elevation").getInfo()
 
     def clim(s):
-        return {int(m): round(float(v), 4) for m, v in s.groupby(s.index.month).mean().items()}
+        return {str(int(m)): round(float(v), 4) for m, v in s.groupby(s.index.month).mean().items()}
 
     def monthly_dict(s):
         return {str(d.date()): round(float(v), 4) for d, v in s.items()}

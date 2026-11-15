@@ -2,18 +2,25 @@ from __future__ import annotations
 
 import logging
 import time
+from datetime import datetime
 from typing import Any
 
 import numpy as np
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+# Load project-root .env before importing the lazy Earth Engine adapter. The
+# legacy adapter reads GEE_PROJECT when it is imported, so load order matters.
+load_dotenv()
+
 from .data.climate import get_climate_profile
 from .data.database import initialize_database, list_crops
+from .data.gee_client import load_gee
 from .data.meteomatics_client import build_profile as build_meteomatics_profile
 from .advisor import MAX_HISTORY_ITEMS, MAX_MESSAGE_LENGTH, answer as advisor_answer
-from .data.power_client import MONTHS, doy_to_text
+from .data.power_client import MONTHS, doy_to_text, latest_power_end_date, load_power_payload
 from .engine.crops import CROPS, ROTATIONS
 from .engine.scenarios import select_wet_climate
 from .engine.scoring import explain, rotation_indicators, score_rotation, status
@@ -176,6 +183,44 @@ def health():
 @app.get("/api/crops")
 def crops():
     return list_crops()
+
+
+@app.get("/api/nasa/power")
+def nasa_power(lat: float = 36.73, lon: float = 9.18, years: int = 5):
+    """Proxy NASA POWER so the frontend uses the backend's validated data path."""
+    if not -90 <= lat <= 90 or not -180 <= lon <= 180:
+        raise HTTPException(status_code=422, detail="latitude or longitude is out of range")
+    if not 1 <= years <= 20:
+        raise HTTPException(status_code=422, detail="years must be between 1 and 20")
+    try:
+        return load_power_payload(round(lat, 4), round(lon, 4), years, latest_power_end_date())
+    except Exception as error:
+        logger.warning("NASA POWER fetch failed (%s)", type(error).__name__)
+        raise HTTPException(status_code=502, detail="NASA POWER data is temporarily unavailable") from error
+
+
+@app.get("/api/nasa/satellites")
+def nasa_satellites(lat: float = 36.73, lon: float = 9.18, years: int = 5):
+    """Return field-neighborhood satellite observations from authenticated Earth Engine."""
+    if not -90 <= lat <= 90 or not -180 <= lon <= 180:
+        raise HTTPException(status_code=422, detail="latitude or longitude is out of range")
+    if not 1 <= years <= 10:
+        raise HTTPException(status_code=422, detail="years must be between 1 and 10")
+    end_year = datetime.now().year - 1
+    start_year = max(2000, end_year - years + 1)
+    try:
+        observations = load_gee(round(lat, 4), round(lon, 4), start_year, end_year)
+    except Exception as error:
+        logger.warning("Earth Engine satellite request failed (%s)", type(error).__name__)
+        raise HTTPException(
+            status_code=503,
+            detail="Earth Engine data is unavailable; check backend Earth Engine authentication and GEE_PROJECT.",
+        ) from error
+    return {
+        "source": "Google Earth Engine",
+        "period": {"start_year": start_year, "end_year": end_year},
+        **observations,
+    }
 
 
 @app.post("/api/advisor/chat")

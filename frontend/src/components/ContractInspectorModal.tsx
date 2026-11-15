@@ -57,7 +57,7 @@ export const ContractInspectorModal: React.FC<ContractInspectorModalProps> = ({
       showToast('Copied contract JSON to clipboard.');
       setTimeout(() => setCopied(false), 1800);
     } catch {
-      showToast('Copy failed — select JSON manually.');
+      showToast('Copy failed. Select JSON manually.');
     }
   };
 
@@ -138,7 +138,7 @@ export const ContractInspectorModal: React.FC<ContractInspectorModalProps> = ({
             type="text"
             value={urlInput}
             onChange={(e) => setUrlInput(e.target.value)}
-            placeholder="POST URL (default: http://localhost:8000/api/analyze)"
+            placeholder="Optional POST URL (e.g. http://localhost:8000/api/optimize) or leave blank for simulator"
             className="flex-1 px-3 py-2 bg-white border border-[#D1D1D1] rounded-lg font-mono-tech text-xs focus:outline-none focus:border-[#00873A]"
           />
           <button
@@ -157,7 +157,7 @@ export const ContractInspectorModal: React.FC<ContractInspectorModalProps> = ({
 
         {lastApiError && (
           <div className="px-6 py-2 bg-[#FCE9E4] text-[#812411] text-xs font-medium border-b border-[#F3C5B9]">
-            Remote endpoint notice: {lastApiError} — showing schema-valid local simulation.
+            Remote endpoint notice: {lastApiError}. Showing schema-valid local simulation.
           </div>
         )}
 

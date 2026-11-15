@@ -3,6 +3,7 @@ import {
   AlertCircle,
   Calculator,
   CheckCircle2,
+  Coins,
   Database,
   ExternalLink,
   Globe,
@@ -18,6 +19,7 @@ import {
   DATA_SOURCES_REGISTRY,
   DataSourceEntry,
   LIVE_BACKEND_DATASETS,
+  MARKET_FINANCE_DATASETS,
   NON_SATELLITE_INPUTS,
   NOT_USED_IN_LIVE_BACKEND,
 } from '../data/dataSourcesRegistry';
@@ -36,15 +38,21 @@ const PHASE_SECTIONS: {
 }[] = [
   {
     id: 'phase1',
-    title: 'Phase 1 — Always-On Live Backend Pipeline',
+    title: 'Phase 1: Always-On Live Backend Pipeline',
     subtitle: 'Connected directly in Tadawol via NASA POWER REST API (no API key).',
     badgeClass: 'bg-[#00873A] text-white',
   },
   {
     id: 'phase2',
-    title: 'Phase 2 — Optional Earth Engine Satellite Layers',
+    title: 'Phase 2: Optional Earth Engine Satellite Layers',
     subtitle: 'SMAP L4 v008, MODIS MOD13Q1 v061, and SRTM GL1 v003 when GEE is enabled.',
     badgeClass: 'bg-[#EBB40E] text-[#111111]',
+  },
+  {
+    id: 'phase-market',
+    title: '2025-2026 Market, Input Cost & Subsidy Datasets',
+    subtitle: 'Verified regional prices, fertilizers & farm procurement benchmarks powering Market & Finance.',
+    badgeClass: 'bg-[#007432] text-white',
   },
   {
     id: 'phase3-nasa',
@@ -109,7 +117,7 @@ export const DataSourcesModal: React.FC<DataSourcesModalProps> = ({
               Final Data Specification &amp; Satellite Transparency
             </div>
             <h2 className="text-xl sm:text-2xl font-extrabold text-white">
-              Data Used in Tadawol — Live Backend Datasets, Thresholds &amp; Limitations
+              Data Used in Tadawol: Live Backend Datasets, Thresholds &amp; Limitations
             </h2>
             <p className="text-xs sm:text-sm text-white/90 max-w-3xl">
               Aligned directly with <code>backend/main.py</code> &amp;{' '}
@@ -139,7 +147,7 @@ export const DataSourcesModal: React.FC<DataSourcesModalProps> = ({
                   : 'text-[#474747] hover:text-[#111111]'
               }`}
             >
-              Final Live Data Spec (4 Active + Thresholds)
+              Final Live Data Spec (Satellite + 2026 Market)
             </button>
             <button
               type="button"
@@ -251,15 +259,82 @@ export const DataSourcesModal: React.FC<DataSourcesModalProps> = ({
                 </div>
               </section>
 
-              {/* SECTION 2: NON-SATELLITE INPUTS */}
+              {/* SECTION 2: VERIFIED 2025-2026 MARKET & FINANCIAL DATASETS */}
+              <section className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <Coins className="w-4 h-4 text-[#00873A]" />
+                  <h3 className="text-base font-extrabold text-[#111111]">
+                    2. Verified 2025-2026 Market, Input Cost &amp; Subsidy Datasets
+                  </h3>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  {MARKET_FINANCE_DATASETS.map((ds) => (
+                    <div
+                      key={ds.id}
+                      className="bg-white border border-[#DFDDD6] rounded-2xl p-4 space-y-3 hover:border-[#00873A] transition"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <h4 className="text-sm font-extrabold text-[#111111]">{ds.name}</h4>
+                          <p className="text-[11px] text-[#6F6F6F] mt-0.5">{ds.provider}</p>
+                        </div>
+                        <span className="text-[10px] font-extrabold uppercase px-2.5 py-1 rounded-full bg-[#E3F5EB] text-[#005222] shrink-0">
+                          {ds.period}
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-1 gap-1.5 text-xs bg-[#F5F4F0] rounded-xl p-3">
+                        <div>
+                          <span className="font-bold text-[#111111]">Coverage: </span>
+                          <span className="text-[#474747]">{ds.coverage}</span>
+                        </div>
+                        <div>
+                          <span className="font-bold text-[#111111]">Verified Benchmarks: </span>
+                          <span className="text-[#474747]">{ds.variables}</span>
+                        </div>
+                        <div>
+                          <span className="font-bold text-[#00873A]">Used for: </span>
+                          <span className="text-[#2D2D2D]">{ds.usedFor}</span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-start gap-1.5 text-[11px] text-[#8C2B11] bg-[#FCEBE6]/65 border border-[#F0C4B8] rounded-xl p-2.5">
+                        <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                        <span>
+                          <strong>Main limitation:</strong> {ds.limitation}
+                        </span>
+                      </div>
+
+                      <div className="flex flex-wrap gap-2 pt-1">
+                        {ds.links.map((lnk) => (
+                          <a
+                            key={lnk.url}
+                            href={lnk.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#F5F4F0] hover:bg-[#EBB40E] border border-[#D9D9D9] text-[11px] font-bold text-[#111111] no-underline transition"
+                          >
+                            <Globe className="w-3 h-3 text-[#00873A]" />
+                            {lnk.label}
+                            <ExternalLink className="w-3 h-3" />
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+
+              {/* SECTION 3: NON-SATELLITE INPUTS */}
               <section className="space-y-3">
                 <div className="flex items-center gap-2">
                   <Sliders className="w-4 h-4 text-[#00873A]" />
                   <h3 className="text-base font-extrabold text-[#111111]">
-                    2. Inputs That Are Not Satellite Datasets
+                    3. Inputs That Are Not Satellite Datasets
                   </h3>
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   {NON_SATELLITE_INPUTS.map((inp) => (
                     <div
                       key={inp.input}
@@ -285,7 +360,7 @@ export const DataSourcesModal: React.FC<DataSourcesModalProps> = ({
                 <div className="flex items-center gap-2">
                   <Calculator className="w-4 h-4 text-[#00873A]" />
                   <h3 className="text-base font-extrabold text-[#111111]">
-                    3. Indicators &amp; Risk Calendar Thresholds Calculated From the Data
+                    4. Indicators &amp; Risk Calendar Thresholds Calculated From the Data
                   </h3>
                 </div>
                 <div className="border border-[#DFDDD6] rounded-xl overflow-hidden bg-white">
@@ -319,7 +394,7 @@ export const DataSourcesModal: React.FC<DataSourcesModalProps> = ({
                 <div className="flex items-center gap-2">
                   <XCircle className="w-4 h-4 text-[#6F6F6F]" />
                   <h3 className="text-base font-extrabold text-[#111111]">
-                    4. Considered But Not Used in the Live Backend (Scope Transparency)
+                    5. Considered But Not Used in the Live Backend (Scope Transparency)
                   </h3>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -371,6 +446,7 @@ export const DataSourcesModal: React.FC<DataSourcesModalProps> = ({
                       { id: 'all', label: `All (${DATA_SOURCES_REGISTRY.length})` },
                       { id: 'phase1', label: 'Phase 1 Live' },
                       { id: 'phase2', label: 'Phase 2 EE' },
+                      { id: 'phase-market', label: '2026 Market & Finance' },
                       { id: 'phase3-nasa', label: 'NASA / Global' },
                       { id: 'phase3-partner', label: 'ESA / Partners' },
                       { id: 'phase3-regional', label: 'USDA / USGS' },

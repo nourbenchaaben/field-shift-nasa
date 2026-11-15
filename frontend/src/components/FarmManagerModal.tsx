@@ -1,6 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useFarm } from '../context/FarmContext';
 import { FarmLeafletMap } from './FarmLeafletMap';
+import {
+  LocationCascadePicker,
+  LocationSelection,
+} from './LocationCascadePicker';
 import { CountryOption, GLOBAL_COUNTRIES } from '../data/countries';
 import { GLOBAL_CROPS } from '../data/decisionEngine';
 import {
@@ -18,7 +22,6 @@ import {
   MapPin,
   Plus,
   Save,
-  Search,
   Sprout,
   Trash2,
   X,
@@ -68,8 +71,10 @@ export const FarmManagerModal: React.FC = () => {
 
   // Draft form state
   const [farmName, setFarmName] = useState('');
-  const [countrySearch, setCountrySearch] = useState('');
   const [selectedCountry, setSelectedCountry] = useState<CountryOption>(GLOBAL_COUNTRIES[0]);
+  const [selectedStateName, setSelectedStateName] = useState('');
+  const [selectedLocalityName, setSelectedLocalityName] = useState('');
+  const [regionLabel, setRegionLabel] = useState(GLOBAL_COUNTRIES[0].regionHint);
   const [coords, setCoords] = useState<[number, number]>([36.8142, 9.8635]);
   const [boundary, setBoundary] = useState<[number, number][]>(() =>
     buildDefaultBoundary(36.8142, 9.8635)
@@ -88,7 +93,6 @@ export const FarmManagerModal: React.FC = () => {
     if (!farmModal.open) return;
     setEditTab(farmModal.initialTab);
     setConfirmDelete(false);
-    setCountrySearch('');
 
     const currentCountry =
       GLOBAL_COUNTRIES.find((c) => c.code === activeFarm.countryCode) ?? GLOBAL_COUNTRIES[0];
@@ -99,6 +103,9 @@ export const FarmManagerModal: React.FC = () => {
       const offsetLng = Number((activeFarm.coordinates.lng + 0.015).toFixed(5));
       setFarmName(`Parcel #${farms.length + 1}`);
       setSelectedCountry(currentCountry);
+      setSelectedStateName(activeFarm.stateName ?? '');
+      setSelectedLocalityName(activeFarm.localityName ?? '');
+      setRegionLabel(activeFarm.regionLabel || currentCountry.regionHint);
       setCoords([offsetLat, offsetLng]);
       setBoundary(scaleBoundaryToHectares(buildDefaultBoundary(offsetLat, offsetLng), 18));
       setSoilType(currentCountry.defaultSoil);
@@ -110,6 +117,9 @@ export const FarmManagerModal: React.FC = () => {
     } else {
       setFarmName(activeFarm.farmName);
       setSelectedCountry(currentCountry);
+      setSelectedStateName(activeFarm.stateName ?? '');
+      setSelectedLocalityName(activeFarm.localityName ?? '');
+      setRegionLabel(activeFarm.regionLabel || currentCountry.regionHint);
       setCoords([activeFarm.coordinates.lat, activeFarm.coordinates.lng]);
       setBoundary(activeFarm.boundary.map((pt) => [...pt] as [number, number]));
       setSoilType(activeFarm.soilType);
@@ -123,17 +133,6 @@ export const FarmManagerModal: React.FC = () => {
 
   const areaHa = useMemo(() => computePolygonAreaHectares(boundary), [boundary]);
 
-  const filteredCountries = useMemo(() => {
-    const q = countrySearch.trim().toLowerCase();
-    if (!q) return GLOBAL_COUNTRIES;
-    return GLOBAL_COUNTRIES.filter(
-      (c) =>
-        c.name.toLowerCase().includes(q) ||
-        c.regionHint.toLowerCase().includes(q) ||
-        c.code.toLowerCase().includes(q)
-    );
-  }, [countrySearch]);
-
   // Detect specifically which fields changed in Edit mode (supports partial editing!)
   const changedSummary = useMemo(() => {
     if (isAdd) return [];
@@ -143,7 +142,9 @@ export const FarmManagerModal: React.FC = () => {
     if (
       Math.abs(coords[0] - activeFarm.coordinates.lat) > 0.0004 ||
       Math.abs(coords[1] - activeFarm.coordinates.lng) > 0.0004 ||
-      selectedCountry.code !== activeFarm.countryCode
+      selectedCountry.code !== activeFarm.countryCode ||
+      selectedStateName !== (activeFarm.stateName ?? '') ||
+      selectedLocalityName !== (activeFarm.localityName ?? '')
     ) {
       changes.push('Location (re-syncs NASA POWER)');
     }
@@ -166,6 +167,8 @@ export const FarmManagerModal: React.FC = () => {
     areaHa,
     coords,
     selectedCountry.code,
+    selectedStateName,
+    selectedLocalityName,
     soilType,
     slopeOption,
     irrigationType,
@@ -177,11 +180,15 @@ export const FarmManagerModal: React.FC = () => {
 
   if (!farmModal.open) return null;
 
-  const handleSelectCountry = (c: CountryOption) => {
-    setSelectedCountry(c);
-    setCoords([c.lat, c.lng]);
-    setBoundary(scaleBoundaryToHectares(buildDefaultBoundary(c.lat, c.lng), areaHa || 20));
-    if (isAdd) setSoilType(c.defaultSoil);
+  const handleLocationSelect = (sel: LocationSelection) => {
+    const countryChanged = sel.country.code !== selectedCountry.code;
+    setSelectedCountry(sel.country);
+    setSelectedStateName(sel.stateName ?? '');
+    setSelectedLocalityName(sel.localityName ?? '');
+    setRegionLabel(sel.regionLabel);
+    setCoords([sel.lat, sel.lng]);
+    setBoundary(scaleBoundaryToHectares(buildDefaultBoundary(sel.lat, sel.lng), areaHa || 20));
+    if (isAdd && countryChanged) setSoilType(sel.country.defaultSoil);
   };
 
   const handleMapPin = (lat: number, lng: number) => {
@@ -216,8 +223,10 @@ export const FarmManagerModal: React.FC = () => {
       countryCode: selectedCountry.code,
       countryName: selectedCountry.name,
       countryFlag: selectedCountry.flag,
+      stateName: selectedStateName || undefined,
+      localityName: selectedLocalityName || undefined,
       climateZone: selectedCountry.climateZone,
-      regionLabel: `${selectedCountry.regionHint}, ${selectedCountry.name}`,
+      regionLabel: regionLabel || `${selectedCountry.regionHint}, ${selectedCountry.name}`,
       coordinates: coordObj,
       boundary,
       areaHectares: areaHa,
@@ -316,8 +325,8 @@ export const FarmManagerModal: React.FC = () => {
                 Updating: {changedSummary.join(' · ')}
               </span>
             ) : (
-              <span className="text-[11px] text-[#6F6F6F]">
-                Change just one detail or several — everything else stays untouched.
+              <span className="text-[11px] text-[#3A3A3A]">
+                Change just one detail or several; everything else stays untouched.
               </span>
             )}
           </div>
@@ -333,9 +342,15 @@ export const FarmManagerModal: React.FC = () => {
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div>
                       <h3 className="text-sm font-extrabold text-[#111111]">
-                        {selectedCountry.flag} {selectedCountry.name} — Pin Location or Resize Area
+                        {selectedCountry.flag}{' '}
+                        {selectedLocalityName
+                          ? `${selectedLocalityName}, ${selectedStateName}`
+                          : selectedStateName
+                            ? `${selectedStateName}, ${selectedCountry.name}`
+                            : selectedCountry.name}
+                        : Pin Location or Resize Area
                       </h3>
-                      <p className="text-xs text-[#6F6F6F]">
+                      <p className="text-xs text-[#3A3A3A]">
                         Drag yellow corners to resize, drag center label to move, or switch to Drop
                         Pin / Draw Shape.
                       </p>
@@ -345,33 +360,13 @@ export const FarmManagerModal: React.FC = () => {
                     </span>
                   </div>
 
-                  {/* Quick Country Search & Chips */}
-                  <div className="flex flex-col sm:flex-row gap-2">
-                    <div className="relative flex-1">
-                      <Search className="w-3.5 h-3.5 text-[#6F6F6F] absolute left-3 top-1/2 -translate-y-1/2" />
-                      <input
-                        type="text"
-                        value={countrySearch}
-                        onChange={(e) => setCountrySearch(e.target.value)}
-                        placeholder="Search any country to center map..."
-                        className="w-full pl-8 pr-3 py-1.5 bg-[#F5F4F0] border border-[#D1D1D1] rounded-full text-xs focus:outline-none focus:bg-white focus:border-[#00873A]"
-                      />
-                    </div>
-                    <select
-                      value={selectedCountry.code}
-                      onChange={(e) => {
-                        const found = GLOBAL_COUNTRIES.find((c) => c.code === e.target.value);
-                        if (found) handleSelectCountry(found);
-                      }}
-                      className="px-3 py-1.5 bg-white border border-[#D1D1D1] rounded-full text-xs font-bold text-[#111111] focus:outline-none focus:border-[#00873A]"
-                    >
-                      {filteredCountries.map((c) => (
-                        <option key={c.code} value={c.code}>
-                          {c.flag} {c.name} ({c.climateZone})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+                  {/* Live Flagged Country -> State/Governorate -> Delegation/Area Picker */}
+                  <LocationCascadePicker
+                    countryCode={selectedCountry.code}
+                    stateName={selectedStateName}
+                    localityName={selectedLocalityName}
+                    onSelect={handleLocationSelect}
+                  />
 
                   <FarmLeafletMap
                     mode="onboarding"
@@ -384,9 +379,9 @@ export const FarmManagerModal: React.FC = () => {
 
                   {/* Precision Farm Size Controls (Slider + Direct Hectares Number Input) */}
                   <div className="p-3.5 rounded-xl bg-[#F5F4F0] border border-[#E2E0D8] flex flex-wrap items-center justify-between gap-3">
-                    <div className="flex items-center gap-2 text-xs font-bold text-[#111111]">
-                      <MapPin className="w-4 h-4 text-[#00873A]" />
-                      <span>Farm Size (hectares):</span>
+                    <div className="flex items-center gap-2 text-sm font-extrabold text-[#111111]">
+                      <MapPin className="w-4 h-4 text-[#00873A] shrink-0" />
+                      <span className="font-extrabold text-[#111111] tracking-tight">Farm Size:</span>
                       <input
                         type="number"
                         min={2}
@@ -394,12 +389,12 @@ export const FarmManagerModal: React.FC = () => {
                         step={0.5}
                         value={areaHa}
                         onChange={(e) => handleAreaChange(Number(e.target.value))}
-                        className="w-20 px-2.5 py-1 bg-white border border-[#D1D1D1] rounded-lg text-xs font-extrabold text-[#00873A] focus:outline-none focus:border-[#00873A]"
+                        className="w-20 px-2.5 py-1 bg-white border border-[#D1D1D1] rounded-lg text-sm font-black text-[#111111] focus:outline-none focus:border-[#00873A]"
                       />
-                      <span className="text-[#6F6F6F] font-medium">ha</span>
+                      <span className="text-xs font-extrabold text-[#111111]">ha</span>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className="text-[11px] text-[#6F6F6F]">2 ha</span>
+                      <span className="text-[11px] text-[#3A3A3A]">2 ha</span>
                       <input
                         type="range"
                         min={2}
@@ -409,7 +404,7 @@ export const FarmManagerModal: React.FC = () => {
                         onChange={(e) => handleAreaChange(Number(e.target.value))}
                         className="w-40 accent-[#00873A] cursor-pointer"
                       />
-                      <span className="text-[11px] text-[#6F6F6F]">250 ha</span>
+                      <span className="text-[11px] text-[#3A3A3A]">250 ha</span>
                     </div>
                   </div>
                 </div>
@@ -575,7 +570,7 @@ export const FarmManagerModal: React.FC = () => {
                         <div className="text-xs font-extrabold">{opt.value}</div>
                         <div
                           className={`text-[10px] mt-0.5 leading-tight ${
-                            soilType === opt.value ? 'text-white/80' : 'text-[#6F6F6F]'
+                            soilType === opt.value ? 'text-white/80' : 'text-[#3A3A3A]'
                           }`}
                         >
                           {opt.note}
@@ -700,7 +695,7 @@ export const FarmManagerModal: React.FC = () => {
 
                 {farms.length > 1 && (
                   <div className="pt-4 border-t border-[#EFECE6] flex items-center justify-between gap-3">
-                    <div className="text-xs text-[#6F6F6F]">
+                    <div className="text-xs text-[#3A3A3A]">
                       You have <strong>{farms.length} farms</strong> in your account. You can safely
                       remove this parcel if you no longer manage it.
                     </div>
@@ -742,7 +737,7 @@ export const FarmManagerModal: React.FC = () => {
 
           {/* Sticky Modal Footer */}
           <div className="px-6 py-4 bg-[#F5F4F0] border-t border-[#DFDDD6] flex flex-wrap items-center justify-between gap-3 shrink-0">
-            <div className="text-xs text-[#6F6F6F]">
+            <div className="text-xs text-[#3A3A3A]">
               {isAdd ? (
                 <span>
                   Will sync live 5-year <strong>NASA POWER</strong> data for{' '}

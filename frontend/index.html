@@ -3,13 +3,27 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Tadawol — AI & Satellite Smart Crop Rotation Platform</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>Tadawol | AI &amp; NASA Smart Crop Rotation</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
       href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Montserrat:wght@400;500;600;700;800&display=swap"
       rel="stylesheet"
     />
+    <script>
+      try {
+        if (localStorage.getItem('tadawol_theme') === 'dark') {
+          document.documentElement.classList.add('dark');
+          document.documentElement.setAttribute('data-theme', 'dark');
+        }
+        var savedLang = localStorage.getItem('tadawol_language');
+        if (savedLang) {
+          document.documentElement.lang = savedLang;
+          document.documentElement.dir = savedLang === 'ar' || savedLang === 'ur' ? 'rtl' : 'ltr';
+        }
+      } catch (e) {}
+    </script>
   </head>
   <body class="bg-white text-[#111111] antialiased selection:bg-[#EBB40E]/40 selection:text-[#111111]">
     <div id="root"></div>

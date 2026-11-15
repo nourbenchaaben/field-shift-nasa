@@ -1,7 +1,12 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { useFarm } from '../context/FarmContext';
+import { ThemeToggleButton } from '../context/ThemeContext';
 import { BrandMark } from '../components/BrandMark';
 import { FarmLeafletMap } from '../components/FarmLeafletMap';
+import {
+  LocationCascadePicker,
+  LocationSelection,
+} from '../components/LocationCascadePicker';
 import { CountryOption, GLOBAL_COUNTRIES } from '../data/countries';
 import { GLOBAL_CROPS } from '../data/decisionEngine';
 import {
@@ -11,6 +16,8 @@ import {
   scaleBoundaryToHectares,
 } from '../data/agronomyData';
 import { resolveSlopeDegrees } from '../api/nasaPowerService';
+import { FarmFinanceDraft, FarmFinanceFields } from '../components/FarmFinanceFields';
+import { getDefaultCurrencyForCountry } from '../data/regionalMarketData';
 import { IrrigationType, SlopeOption, SoilType } from '../types/farm';
 import {
   AlertCircle,
@@ -18,13 +25,13 @@ import {
   ArrowRight,
   Camera,
   CheckCircle2,
+  Eye,
+  EyeOff,
   Globe,
   Loader2,
   Lock,
   Mail,
   MapPin,
-  Search,
-  Sparkles,
   User,
 } from 'lucide-react';
 
@@ -57,25 +64,37 @@ const EQUIPMENT_LIST = [
 const CROP_OPTIONS = Object.values(GLOBAL_CROPS);
 
 export const AuthOnboardingPage: React.FC = () => {
-  const { authTab, navigate, loginWithCredentials, loginDemoAccount, registerAccount } = useFarm();
+  const {
+    authTab,
+    navigate,
+    loginWithCredentials,
+    registerAccount,
+    showToast,
+  } = useFarm();
   const [tab, setTab] = useState<'login' | 'register'>(authTab);
 
+  const [loginBusy, setLoginBusy] = useState(false);
+
   // Login state
-  const [loginEmail, setLoginEmail] = useState('amine@medjerdafarms.tn');
-  const [loginPassword, setLoginPassword] = useState('tadawol123');
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
+  const [showRegisterPassword, setShowRegisterPassword] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
+  const [registerError, setRegisterError] = useState<string | null>(null);
 
   // Registration state
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
   const [farmName, setFarmName] = useState('');
   const [photoDataUrl, setPhotoDataUrl] = useState<string | undefined>(undefined);
   const fileRef = useRef<HTMLInputElement | null>(null);
 
-  const [countrySearch, setCountrySearch] = useState('');
   const [selectedCountry, setSelectedCountry] = useState<CountryOption>(GLOBAL_COUNTRIES[0]);
+  const [selectedStateName, setSelectedStateName] = useState<string>('');
+  const [selectedLocalityName, setSelectedLocalityName] = useState<string>('');
+  const [regionLabel, setRegionLabel] = useState<string>(GLOBAL_COUNTRIES[0].regionHint);
   const [coords, setCoords] = useState<[number, number]>([
     GLOBAL_COUNTRIES[0].lat,
     GLOBAL_COUNTRIES[0].lng,
@@ -95,29 +114,82 @@ export const AuthOnboardingPage: React.FC = () => {
   ]);
   const [lastSeason1, setLastSeason1] = useState('Wheat');
   const [lastSeason2, setLastSeason2] = useState('Maize (Corn)');
+  const [financeDraft, setFinanceDraft] = useState<FarmFinanceDraft>(() => ({
+    enabled: false,
+    currencyCode: getDefaultCurrencyForCountry(GLOBAL_COUNTRIES[0].code).code,
+    seasonBudgetCapacity: '',
+    operatingCostPerHa: '',
+    fertilizerCostPerHa: '',
+    lastSeasonNetProfit: '',
+    targetAnnualProfit: '',
+    irrigationEnergyCostPerHa: '',
+  }));
+  const [currencyManuallyPicked, setCurrencyManuallyPicked] = useState(false);
+  const [financeValidationError, setFinanceValidationError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [registrationError, setRegistrationError] = useState<string | null>(null);
 
   const areaHa = useMemo(() => computePolygonAreaHectares(boundary), [boundary]);
 
-  const filteredCountries = useMemo(() => {
-    const q = countrySearch.trim().toLowerCase();
-    if (!q) return GLOBAL_COUNTRIES;
-    return GLOBAL_COUNTRIES.filter(
-      (c) =>
-        c.name.toLowerCase().includes(q) ||
-        c.regionHint.toLowerCase().includes(q) ||
-        c.code.toLowerCase().includes(q)
-    );
-  }, [countrySearch]);
+  const fillDemoLogin = () => {
+    setLoginEmail('demo@tadawol.app');
+    setLoginPassword('tadawol123');
+    setLoginError(null);
+  };
 
-  const handleSelectCountry = (country: CountryOption) => {
-    setSelectedCountry(country);
-    setCoords([country.lat, country.lng]);
+  const fillDemoRegistration = () => {
+    const tunisia = GLOBAL_COUNTRIES.find((country) => country.code === 'TN');
+    if (tunisia) setSelectedCountry(tunisia);
+    const lat = 36.8142;
+    const lng = 9.8635;
+    setSelectedStateName('Manouba Governorate');
+    setSelectedLocalityName('Medjerda Valley');
+    setRegionLabel('Medjerda Valley, Tunisia');
+    setCoords([lat, lng]);
+    setBoundary(scaleBoundaryToHectares(buildDefaultBoundary(lat, lng), 28));
+    setFullName('Amine Ben Salem');
+    setFarmName('El-Khadhra Valley Farm');
+    setEmail('sample.farmer@tadawol.app');
+    setPassword('TadawolDemo2026!');
+    setSoilType('Loamy');
+    setSlopeOption('Gentle Slope');
+    setIrrigationType('Drip');
+    setEquipment(['Tractor & Basic Plow', 'Drip Irrigation Lines', 'Soil Moisture Sensor']);
+    setLastSeason1(CROP_OPTIONS.find((crop) => /wheat/i.test(crop.name))?.name ?? CROP_OPTIONS[0].name);
+    setLastSeason2(CROP_OPTIONS.find((crop) => /barley/i.test(crop.name))?.name ?? CROP_OPTIONS[1].name);
+    setFinanceDraft({
+      enabled: true,
+      currencyCode: 'TND',
+      seasonBudgetCapacity: '42000',
+      operatingCostPerHa: '1180',
+      fertilizerCostPerHa: '320',
+      lastSeasonNetProfit: '26500',
+      targetAnnualProfit: '32000',
+      irrigationEnergyCostPerHa: '145',
+    });
+    setCurrencyManuallyPicked(true);
+    setRegisterError(null);
+    setFinanceValidationError(null);
+  };
+
+  const handleLocationSelect = (sel: LocationSelection) => {
+    const countryChanged = sel.country.code !== selectedCountry.code;
+    setSelectedCountry(sel.country);
+    setSelectedStateName(sel.stateName ?? '');
+    setSelectedLocalityName(sel.localityName ?? '');
+    setRegionLabel(sel.regionLabel);
+    setCoords([sel.lat, sel.lng]);
     setBoundary(
-      scaleBoundaryToHectares(buildDefaultBoundary(country.lat, country.lng), areaHa || 25)
+      scaleBoundaryToHectares(buildDefaultBoundary(sel.lat, sel.lng), areaHa || 25)
     );
-    setSoilType(country.defaultSoil);
+    if (countryChanged) {
+      setSoilType(sel.country.defaultSoil);
+      if (!currencyManuallyPicked) {
+        setFinanceDraft((prev) => ({
+          ...prev,
+          currencyCode: getDefaultCurrencyForCountry(sel.country.code).code,
+        }));
+      }
+    }
   };
 
   const handleMapPin = (lat: number, lng: number) => {
@@ -137,12 +209,6 @@ export const AuthOnboardingPage: React.FC = () => {
   const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
     if (!f) return;
-    if (!f.type.startsWith('image/') || f.size > 5 * 1024 * 1024) {
-      setRegistrationError('Photo must be an image smaller than 5 MB.');
-      e.target.value = '';
-      return;
-    }
-    setRegistrationError(null);
     const reader = new FileReader();
     reader.onload = () => {
       if (typeof reader.result === 'string') setPhotoDataUrl(reader.result);
@@ -156,50 +222,119 @@ export const AuthOnboardingPage: React.FC = () => {
     );
   };
 
-  const handleLoginSubmit = (e: React.FormEvent) => {
+  const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError(null);
-    const res = loginWithCredentials(loginEmail, loginPassword);
-    if (!res.ok) setLoginError(res.error ?? 'Login failed.');
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(loginEmail.trim())) {
+      setLoginError('Please enter a valid email address.');
+      return;
+    }
+    setLoginBusy(true);
+    try {
+      const res = await loginWithCredentials(loginEmail, loginPassword);
+      if (!res.ok) setLoginError(res.error ?? 'Login failed.');
+    } finally {
+      setLoginBusy(false);
+    }
   };
 
   const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setRegistrationError(null);
-    setSubmitting(true);
-    try {
-      if (password !== confirmPassword) {
-        throw new Error('Passwords do not match.');
+    setRegisterError(null);
+    setFinanceValidationError(null);
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      setRegisterError('Please enter a valid email address.');
+      return;
+    }
+    if (financeDraft.enabled) {
+      const cap = Number(financeDraft.seasonBudgetCapacity);
+      const op = Number(financeDraft.operatingCostPerHa);
+      const fert = Number(financeDraft.fertilizerCostPerHa);
+      if (
+        !Number.isFinite(cap) ||
+        cap <= 0 ||
+        !Number.isFinite(op) ||
+        op <= 0 ||
+        financeDraft.fertilizerCostPerHa === '' ||
+        !Number.isFinite(fert) ||
+        fert < 0
+      ) {
+        setFinanceValidationError(
+          'Please enter Season Cash Capacity, Avg. Cost / ha, and Fertilizer / ha (or click "Fill typical range").'
+        );
+        return;
       }
-      const coordObj = { lat: coords[0], lng: coords[1] };
-      const resolvedSlopeDeg = resolveSlopeDegrees(slopeOption, coordObj);
-      await registerAccount(
-        {
-          name: fullName.trim(),
-          email: email.trim(),
-          photoDataUrl,
-          farmName: farmName.trim(),
-          countryCode: selectedCountry.code,
-          countryName: selectedCountry.name,
-          countryFlag: selectedCountry.flag,
-          climateZone: selectedCountry.climateZone,
-          regionLabel: `${selectedCountry.regionHint}, ${selectedCountry.name}`,
-          coordinates: coordObj,
-          areaHectares: areaHa,
-          boundary,
-          soilType,
-          slopeOption,
-          slopeDeg: resolvedSlopeDeg,
-          irrigationType,
-          equipment: equipment.length > 0 ? equipment : ['Tractor & Disc Harrow'],
-          previousCrops: [lastSeason1, lastSeason2],
-        },
-        password
-      );
-    } catch (error) {
-      setRegistrationError(error instanceof Error ? error.message : 'Registration failed.');
-    } finally {
-      setSubmitting(false);
+    }
+    setSubmitting(true);
+    const coordObj = { lat: coords[0], lng: coords[1] };
+    const resolvedSlopeDeg = resolveSlopeDegrees(slopeOption, coordObj);
+    const res = await registerAccount(
+      {
+        name: fullName.trim() || 'Global Farmer',
+        email: email.trim() || `farmer.${Date.now()}@tadawol.org`,
+        photoDataUrl,
+        farmName: farmName.trim() || `${selectedCountry.name} Heritage Farm`,
+        countryCode: selectedCountry.code,
+        countryName: selectedCountry.name,
+        countryFlag: selectedCountry.flag,
+        stateName: selectedStateName || undefined,
+        localityName: selectedLocalityName || undefined,
+        climateZone: selectedCountry.climateZone,
+        regionLabel: regionLabel || `${selectedCountry.regionHint}, ${selectedCountry.name}`,
+        coordinates: coordObj,
+        areaHectares: areaHa,
+        boundary,
+        soilType,
+        slopeOption,
+        slopeDeg: resolvedSlopeDeg,
+        irrigationType,
+        equipment: equipment.length > 0 ? equipment : ['Tractor & Disc Harrow'],
+        previousCrops: [lastSeason1, lastSeason2],
+        financeInputs: financeDraft.enabled
+          ? {
+              enabled: true,
+              currencyCode: financeDraft.currencyCode,
+              seasonBudgetCapacityLocal:
+                Number(financeDraft.seasonBudgetCapacity) > 0
+                  ? Math.round(Number(financeDraft.seasonBudgetCapacity))
+                  : undefined,
+              operatingCostPerHaLocal:
+                Number(financeDraft.operatingCostPerHa) > 0
+                  ? Math.round(Number(financeDraft.operatingCostPerHa))
+                  : undefined,
+              fertilizerCostPerHaLocal:
+                financeDraft.fertilizerCostPerHa !== '' &&
+                Number(financeDraft.fertilizerCostPerHa) >= 0
+                  ? Math.round(Number(financeDraft.fertilizerCostPerHa))
+                  : undefined,
+              lastSeasonNetProfitLocal:
+                financeDraft.lastSeasonNetProfit !== '' &&
+                Number.isFinite(Number(financeDraft.lastSeasonNetProfit))
+                  ? Math.round(Number(financeDraft.lastSeasonNetProfit))
+                  : undefined,
+              targetAnnualProfitLocal:
+                Number(financeDraft.targetAnnualProfit) > 0
+                  ? Math.round(Number(financeDraft.targetAnnualProfit))
+                  : undefined,
+              irrigationEnergyCostPerHaLocal:
+                financeDraft.irrigationEnergyCostPerHa !== '' &&
+                Number(financeDraft.irrigationEnergyCostPerHa) >= 0
+                  ? Math.round(Number(financeDraft.irrigationEnergyCostPerHa))
+                  : undefined,
+              includeSubsidies: true,
+              updatedAt: new Date().toISOString(),
+            }
+          : {
+              enabled: false,
+              currencyCode: financeDraft.currencyCode,
+              includeSubsidies: true,
+            },
+      },
+      password
+    );
+    setSubmitting(false);
+    if (!res.ok && res.error) {
+      setRegisterError(res.error);
     }
   };
 
@@ -207,11 +342,18 @@ export const AuthOnboardingPage: React.FC = () => {
     <div className="min-h-screen bg-[#F5F4F0] text-[#111111] flex flex-col">
       {/* Compact Header */}
       <header className="bg-[#FFFEFB] border-b border-[#DFDDD6] h-[72px] px-5 sm:px-8 flex items-center justify-between">
-        <button type="button" onClick={() => navigate('landing')} className="cursor-pointer">
+        <button
+          type="button"
+          onClick={() => navigate('landing')}
+          title="Back to Homepage"
+          aria-label="Tadawol: Back to Homepage"
+          className="cursor-pointer hover:opacity-90 transition"
+        >
           <BrandMark />
         </button>
 
         <div className="flex items-center gap-2">
+          <ThemeToggleButton compact />
           <button
             type="button"
             onClick={() => setTab('login')}
@@ -265,76 +407,95 @@ export const AuthOnboardingPage: React.FC = () => {
               </div>
             )}
 
-            <form onSubmit={handleLoginSubmit} className="space-y-4">
+            <button
+              type="button"
+              onClick={fillDemoLogin}
+              className="w-full rounded-xl border border-[#B7DCC5] bg-[#EAF6EE] px-4 py-3 text-left text-xs font-bold text-[#005222] hover:bg-[#DFF1E5] cursor-pointer"
+            >
+              Fill demo login · demo@tadawol.app
+              <span className="mt-1 block font-medium text-[#3A684B]">Loads the sample farmer account with farm history and NASA sync.</span>
+            </button>
+
+            <form onSubmit={handleLoginSubmit} autoComplete="off" className="space-y-4">
               <div>
                 <label className="block text-xs font-bold text-[#111111] mb-1">Email Address</label>
                 <div className="relative">
                   <Mail className="w-4 h-4 text-[#6F6F6F] absolute left-3.5 top-1/2 -translate-y-1/2" />
                   <input
-                    type="email"
+                    type="text"
+                    inputMode="email"
+                    name="tadawol_signin_contact"
                     required
+                    autoComplete="one-time-code"
+                    autoCapitalize="none"
+                    spellCheck={false}
                     value={loginEmail}
                     onChange={(e) => setLoginEmail(e.target.value)}
                     placeholder="you@farm.org"
-                    autoComplete="email"
                     className="w-full pl-10 pr-3 py-2.5 bg-[#F5F4F0] border border-[#D1D1D1] rounded-xl text-sm focus:outline-none focus:bg-white focus:border-[#00873A]"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-[#111111] mb-1">Password</label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-bold text-[#111111]">Password</label>
+                </div>
                 <div className="relative">
                   <Lock className="w-4 h-4 text-[#6F6F6F] absolute left-3.5 top-1/2 -translate-y-1/2" />
                   <input
-                    type="password"
+                    type="text"
+                    name="tadawol_signin_secret"
                     required
+                    autoComplete="one-time-code"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
                     value={loginPassword}
                     onChange={(e) => setLoginPassword(e.target.value)}
                     placeholder="Enter password"
-                    autoComplete="current-password"
-                    className="w-full pl-10 pr-3 py-2.5 bg-[#F5F4F0] border border-[#D1D1D1] rounded-xl text-sm focus:outline-none focus:bg-white focus:border-[#00873A]"
+                    className={`w-full pl-10 pr-10 py-2.5 bg-[#F5F4F0] border border-[#D1D1D1] rounded-xl text-sm focus:outline-none focus:bg-white focus:border-[#00873A] ${
+                      showLoginPassword ? '' : 'password-masked'
+                    }`}
                   />
+                  <button
+                    type="button"
+                    onClick={() => setShowLoginPassword((v) => !v)}
+                    aria-label={showLoginPassword ? 'Hide password' : 'Show password'}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-[#4A4A4A] hover:text-[#111111] cursor-pointer"
+                  >
+                    {showLoginPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
                 </div>
               </div>
 
-              <button type="submit" className="w-full btn-pill btn-pill-primary text-sm">
-                Sign In to Dashboard
-                <ArrowRight className="w-4 h-4" />
+              <button
+                type="submit"
+                disabled={loginBusy}
+                className="w-full btn-pill btn-pill-primary text-sm disabled:opacity-60"
+              >
+                {loginBusy ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Signing In...
+                  </>
+                ) : (
+                  <>
+                    Sign In to Dashboard
+                    <ArrowRight className="w-4 h-4" />
+                  </>
+                )}
               </button>
             </form>
 
-            <div className="relative py-1">
-              <div className="border-t border-[#E5E3DB]" />
-              <span className="bg-[#FFFEFB] px-3 text-[11px] font-semibold text-[#6F6F6F] absolute left-1/2 -translate-x-1/2 -top-1.5">
-                Quick Access
-              </span>
-            </div>
-
-            <button
-              type="button"
-              onClick={loginDemoAccount}
-              className="w-full p-3.5 rounded-xl bg-[#E3F5EB] hover:bg-[#D2EEDF] border border-[#B9E2CB] text-left flex items-center justify-between gap-3 transition cursor-pointer"
-            >
-              <div>
-                <div className="text-xs font-extrabold text-[#005A26]">
-                  1-Click Demo Farmer Login (🇹🇳 Tunisia)
-                </div>
-                <div className="text-[11px] text-[#007331]">
-                  Amine Ben Salem · El-Khadhra Valley Farm · Live NASA POWER ready
-                </div>
-              </div>
-              <Sparkles className="w-5 h-5 text-[#00873A] shrink-0" />
-            </button>
-
-            <p className="text-center text-xs text-[#6F6F6F]">
+            <p className="text-center text-xs text-[#6F6F6F] pt-2 border-t border-[#EFECE6]">
               New to Tadawol?{' '}
               <button
                 type="button"
                 onClick={() => setTab('register')}
                 className="font-bold text-[#00873A] hover:underline cursor-pointer"
               >
-                Register your global farm here →
+                Register your farm here →
               </button>
             </p>
           </div>
@@ -351,7 +512,12 @@ export const AuthOnboardingPage: React.FC = () => {
                     Step 1 · Pin Your Global Location
                   </span>
                   <h2 className="text-lg font-extrabold text-[#111111]">
-                    {selectedCountry.flag} {selectedCountry.name} Field Map
+                    {selectedCountry.flag}{' '}
+                    {selectedLocalityName
+                      ? `${selectedLocalityName}, ${selectedStateName}`
+                      : selectedStateName
+                        ? `${selectedStateName}, ${selectedCountry.name}`
+                        : `${selectedCountry.name} Field Map`}
                   </h2>
                 </div>
                 <span className="px-3 py-1 rounded-full bg-[#111111] text-[#EBB40E] font-mono-tech text-xs font-bold">
@@ -359,39 +525,13 @@ export const AuthOnboardingPage: React.FC = () => {
                 </span>
               </div>
 
-              {/* Country Quick-Search Map Auto-Center */}
-              <div className="space-y-2">
-                <div className="relative">
-                  <Search className="w-4 h-4 text-[#6F6F6F] absolute left-3.5 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="text"
-                    value={countrySearch}
-                    onChange={(e) => setCountrySearch(e.target.value)}
-                    placeholder="Search any country to auto-center map (e.g., Brazil, India, USA, Kenya, France)..."
-                    className="w-full pl-10 pr-3 py-2 bg-[#F5F4F0] border border-[#D1D1D1] rounded-full text-xs sm:text-sm focus:outline-none focus:bg-white focus:border-[#00873A]"
-                  />
-                </div>
-                <div className="flex gap-1.5 overflow-x-auto pb-1">
-                  {filteredCountries.slice(0, 12).map((c) => {
-                    const active = c.code === selectedCountry.code;
-                    return (
-                      <button
-                        key={c.code}
-                        type="button"
-                        onClick={() => handleSelectCountry(c)}
-                        className={`shrink-0 inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold border transition cursor-pointer ${
-                          active
-                            ? 'bg-[#00873A] text-white border-[#00873A]'
-                            : 'bg-white text-[#474747] border-[#D9D9D9] hover:border-[#111111]'
-                        }`}
-                      >
-                        <span>{c.flag}</span>
-                        <span>{c.name}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
+              {/* Cascading Country -> State/Governorate -> Delegation/Area Picker */}
+              <LocationCascadePicker
+                countryCode={selectedCountry.code}
+                stateName={selectedStateName}
+                localityName={selectedLocalityName}
+                onSelect={handleLocationSelect}
+              />
 
               <FarmLeafletMap
                 mode="onboarding"
@@ -402,17 +542,17 @@ export const AuthOnboardingPage: React.FC = () => {
                 onChangeBoundary={handleBoundaryChange}
               />
 
-              {/* Single-Surface Area Resizer */}
+              {/* Farm Size Resizer */}
               <div className="p-3.5 rounded-xl bg-[#F5F4F0] border border-[#E2E0D8] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div className="flex items-center gap-2 text-xs text-[#474747]">
+                <div className="flex items-center gap-2 text-sm font-extrabold text-[#111111]">
                   <MapPin className="w-4 h-4 text-[#00873A] shrink-0" />
-                  <span>
-                    Unified Farm Size:{' '}
-                    <strong className="text-[#111111]">{areaHa.toFixed(1)} hectares</strong>
+                  <span className="font-extrabold text-[#111111] tracking-tight">
+                    Farm Size:{' '}
+                    <strong className="font-black text-[#111111]">{areaHa.toFixed(1)} hectares</strong>
                   </span>
                 </div>
                 <div className="flex items-center gap-2.5">
-                  <span className="text-[11px] text-[#6F6F6F]">5 ha</span>
+                  <span className="text-[11px] font-semibold text-[#3A3A3A]">5 ha</span>
                   <input
                     type="range"
                     min={5}
@@ -422,7 +562,7 @@ export const AuthOnboardingPage: React.FC = () => {
                     onChange={(e) => handleAreaSlider(Number(e.target.value))}
                     className="w-36 accent-[#00873A] cursor-pointer"
                   />
-                  <span className="text-[11px] text-[#6F6F6F]">200 ha</span>
+                  <span className="text-[11px] font-semibold text-[#3A3A3A]">200 ha</span>
                 </div>
               </div>
             </div>
@@ -438,18 +578,30 @@ export const AuthOnboardingPage: React.FC = () => {
                 Step 2 · Your Profile &amp; Farm Details
               </span>
               <h1 className="text-2xl font-extrabold text-[#111111]">Register your farm</h1>
-              <p className="text-xs text-[#6F6F6F] mt-1">
-                Syncs 5 years of NASA POWER rainfall, frost, and root-zone wetness for your coordinates.
-              </p>
+              <button
+                type="button"
+                onClick={fillDemoRegistration}
+                className="mt-3 rounded-xl border border-[#B7DCC5] bg-[#EAF6EE] px-4 py-2.5 text-left text-xs font-bold text-[#005222] hover:bg-[#DFF1E5] cursor-pointer"
+              >
+                Autofill sample farmer details
+                <span className="mt-1 block font-medium text-[#3A684B]">Example fields only; submitting creates a separate account and syncs NASA data.</span>
+              </button>
             </div>
 
-            {registrationError && (
-              <div className="p-3 rounded-xl bg-[#FCEBE6] border border-[#E7A18E] text-xs text-[#8C2B11] flex items-start gap-2">
+            {registerError && (
+              <div className="p-3 rounded-xl bg-[#FCEBE6] border border-[#E7A18E] text-xs font-semibold text-[#8C2B11] flex items-start gap-2">
                 <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-                <span>{registrationError}</span>
+                <span>{registerError}</span>
               </div>
             )}
 
+            <div className="relative flex items-center">
+              <div className="flex-1 border-t border-[#E4E1D9]" />
+              <span className="px-3 text-[11px] font-bold uppercase tracking-wider text-[#555555]">
+                create a local Tadawol account
+              </span>
+              <div className="flex-1 border-t border-[#E4E1D9]" />
+            </div>
             {/* Optional Profile Photo Upload */}
             <div className="flex items-center gap-4 p-3.5 rounded-xl bg-[#F5F4F0] border border-[#E2E0D8]">
               <div className="relative shrink-0">
@@ -470,9 +622,6 @@ export const AuthOnboardingPage: React.FC = () => {
               </div>
               <div className="flex-1">
                 <div className="text-xs font-bold text-[#111111]">Profile Photo (Optional)</div>
-                <p className="text-[11px] text-[#6F6F6F]">
-                  Shown in your top bar alongside your {selectedCountry.flag} country badge.
-                </p>
                 <input
                   ref={fileRef}
                   type="file"
@@ -501,9 +650,6 @@ export const AuthOnboardingPage: React.FC = () => {
                   value={fullName}
                   onChange={(e) => setFullName(e.target.value)}
                   placeholder="e.g. Carlos Mendez"
-                  minLength={2}
-                  maxLength={80}
-                  autoComplete="name"
                   className="w-full px-3.5 py-2.5 bg-[#F5F4F0] border border-[#D1D1D1] rounded-xl text-sm focus:outline-none focus:bg-white focus:border-[#00873A]"
                 />
               </div>
@@ -515,74 +661,75 @@ export const AuthOnboardingPage: React.FC = () => {
                   value={farmName}
                   onChange={(e) => setFarmName(e.target.value)}
                   placeholder="e.g. Valley Green Farm"
-                  minLength={2}
-                  maxLength={100}
                   className="w-full px-3.5 py-2.5 bg-[#F5F4F0] border border-[#D1D1D1] rounded-xl text-sm focus:outline-none focus:bg-white focus:border-[#00873A]"
                 />
               </div>
               <div>
                 <label className="block text-xs font-bold text-[#111111] mb-1">Email *</label>
                 <input
-                  type="email"
+                  type="text"
+                  inputMode="email"
+                  name="tadawol_reg_contact"
                   required
+                  autoComplete="one-time-code"
+                  autoCapitalize="none"
+                  spellCheck={false}
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="farmer@example.com"
-                  autoComplete="email"
                   className="w-full px-3.5 py-2.5 bg-[#F5F4F0] border border-[#D1D1D1] rounded-xl text-sm focus:outline-none focus:bg-white focus:border-[#00873A]"
                 />
               </div>
-              <div>
-                <label className="block text-xs font-bold text-[#111111] mb-1">Password *</label>
-                <input
-                  type="password"
-                  required
-                  minLength={8}
-                  maxLength={128}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="8+ chars, upper/lowercase and number"
-                  autoComplete="new-password"
-                  className="w-full px-3.5 py-2.5 bg-[#F5F4F0] border border-[#D1D1D1] rounded-xl text-sm focus:outline-none focus:bg-white focus:border-[#00873A]"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-[#111111] mb-1">
-                  Confirm Password *
-                </label>
-                <input
-                  type="password"
-                  required
-                  minLength={8}
-                  maxLength={128}
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  placeholder="Repeat your password"
-                  autoComplete="new-password"
-                  className="w-full px-3.5 py-2.5 bg-[#F5F4F0] border border-[#D1D1D1] rounded-xl text-sm focus:outline-none focus:bg-white focus:border-[#00873A]"
-                />
-              </div>
+                <div>
+                  <label className="block text-xs font-bold text-[#111111] mb-1">Password *</label>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      name="tadawol_reg_secret"
+                      required
+                      minLength={6}
+                      autoComplete="one-time-code"
+                      autoCapitalize="none"
+                      autoCorrect="off"
+                      spellCheck={false}
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="Min 6 characters"
+                      className={`w-full pl-3.5 pr-10 py-2.5 bg-[#F5F4F0] border border-[#D1D1D1] rounded-xl text-sm focus:outline-none focus:bg-white focus:border-[#00873A] ${
+                        showRegisterPassword ? '' : 'password-masked'
+                      }`}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowRegisterPassword((v) => !v)}
+                      aria-label={showRegisterPassword ? 'Hide password' : 'Show password'}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-[#4A4A4A] hover:text-[#111111] cursor-pointer"
+                    >
+                      {showRegisterPassword ? (
+                        <EyeOff className="w-4 h-4" />
+                      ) : (
+                        <Eye className="w-4 h-4" />
+                      )}
+                    </button>
+                  </div>
+                </div>
             </div>
 
-            {/* Full Country Dropdown */}
-            <div>
-              <label className="block text-xs font-bold text-[#111111] mb-1">
-                Country (All Global Regions)
-              </label>
-              <select
-                value={selectedCountry.code}
-                onChange={(e) => {
-                  const found = GLOBAL_COUNTRIES.find((c) => c.code === e.target.value);
-                  if (found) handleSelectCountry(found);
-                }}
-                className="w-full px-3.5 py-2.5 bg-[#F5F4F0] border border-[#D1D1D1] rounded-xl text-sm font-medium focus:outline-none focus:bg-white focus:border-[#00873A]"
-              >
-                {GLOBAL_COUNTRIES.map((c) => (
-                  <option key={c.code} value={c.code}>
-                    {c.flag} {c.name} — {c.climateZone}
-                  </option>
-                ))}
-              </select>
+            {/* Selected Location Summary Badge */}
+            <div className="p-3.5 rounded-xl bg-[#E3F5EB]/65 border border-[#A8DEC0] flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-xs sm:text-sm font-extrabold text-[#005222]">
+                <span className="text-lg leading-none">{selectedCountry.flag}</span>
+                <span>
+                  {selectedLocalityName
+                    ? `${selectedLocalityName}, ${selectedStateName}, ${selectedCountry.name}`
+                    : selectedStateName
+                      ? `${selectedStateName}, ${selectedCountry.name}`
+                      : `${selectedCountry.name} (${selectedCountry.climateZone})`}
+                </span>
+              </div>
+              <span className="text-xs font-bold text-[#006B2E]">
+                {areaHa.toFixed(1)} ha selected
+              </span>
             </div>
 
             {/* Simple Soil Type Picker */}
@@ -717,6 +864,21 @@ export const AuthOnboardingPage: React.FC = () => {
               </div>
             </div>
 
+            {/* Optional Farm Finance & Currency Preference (Checkbox Tick + Required/Optional Capacity & Profit Fields) */}
+            <FarmFinanceFields
+              draft={financeDraft}
+              onChange={(next, manualCurr) => {
+                setFinanceDraft(next);
+                setFinanceValidationError(null);
+                if (manualCurr) setCurrencyManuallyPicked(true);
+              }}
+              countryCode={selectedCountry.code}
+              countryName={selectedCountry.name}
+              irrigationType={irrigationType}
+              areaHectares={areaHa}
+              validationError={financeValidationError}
+            />
+
             <button
               type="submit"
               disabled={submitting}
@@ -737,6 +899,7 @@ export const AuthOnboardingPage: React.FC = () => {
           </form>
         </div>
       )}
+
     </div>
   );
 };
