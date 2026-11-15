@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 from dotenv import load_dotenv
@@ -19,7 +20,13 @@ from .data.climate import get_climate_profile
 from .data.database import initialize_database, list_crops
 from .data.gee_client import load_gee
 from .data.meteomatics_client import build_profile as build_meteomatics_profile
-from .advisor import MAX_HISTORY_ITEMS, MAX_MESSAGE_LENGTH, answer as advisor_answer
+from .advisor import (
+    DEFAULT_MODEL,
+    MAX_HISTORY_ITEMS,
+    MAX_MESSAGE_LENGTH,
+    answer as advisor_answer,
+    complete_messages,
+)
 from .data.power_client import MONTHS, doy_to_text, latest_power_end_date, load_power_payload
 from .engine.crops import CROPS, ROTATIONS
 from .engine.scenarios import select_wet_climate
@@ -28,9 +35,18 @@ from .engine.scoring import explain, rotation_indicators, score_rotation, status
 app = FastAPI(title="Rotation Compass API", version="1.0.0")
 logger = logging.getLogger(__name__)
 _advisor_rate_limits: dict[str, list[float]] = {}
+configured_cors_origins = [
+    origin.strip().rstrip("/")
+    for origin in os.getenv("CORS_ORIGINS", "").split(",")
+    if origin.strip()
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        *configured_cors_origins,
+    ],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -70,6 +86,17 @@ class AdvisorRequest(BaseModel):
     message: str = Field(min_length=1, max_length=MAX_MESSAGE_LENGTH)
     farm_context: dict[str, Any] = Field(default_factory=dict)
     conversation: list[AdvisorMessage] = Field(default_factory=list, max_length=MAX_HISTORY_ITEMS)
+
+
+class AiChatMessage(BaseModel):
+    role: Literal["system", "user", "assistant"]
+    content: str = Field(min_length=1, max_length=6000)
+
+
+class AiChatRequest(BaseModel):
+    messages: list[AiChatMessage] = Field(min_length=1, max_length=12)
+    max_tokens: int = Field(default=800, ge=1, le=1200)
+    temperature: float = Field(default=0.3, ge=0, le=1)
 
 
 def _risk_calendar(profile, gee):
@@ -185,6 +212,16 @@ def crops():
     return list_crops()
 
 
+@app.get("/api/ai-status")
+def ai_status():
+    return {
+        "serverConfigured": bool(os.getenv("LLM_API_KEY")),
+        "provider": "groq",
+        "defaultModel": os.getenv("ADVISOR_MODEL", DEFAULT_MODEL),
+        "providerLabel": "Groq",
+    }
+
+
 @app.get("/api/nasa/power")
 def nasa_power(lat: float = 36.73, lon: float = 9.18, years: int = 5):
     """Proxy NASA POWER so the frontend uses the backend's validated data path."""
@@ -241,6 +278,33 @@ def advisor_chat(payload: AdvisorRequest, request: Request):
         raise HTTPException(status_code=422, detail="conversation roles must be user or assistant")
     try:
         return advisor_answer(payload.message, context, history)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except RuntimeError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+
+@app.post("/api/ai-chat")
+def ai_chat(payload: AiChatRequest, request: Request):
+    client_key = request.client.host if request.client else "unknown"
+    now = time.monotonic()
+    recent = [stamp for stamp in _advisor_rate_limits.get(client_key, []) if now - stamp < 60]
+    if len(recent) >= 30:
+        raise HTTPException(status_code=429, detail="AI rate limit exceeded; try again shortly")
+    recent.append(now)
+    _advisor_rate_limits[client_key] = recent
+    try:
+        result = complete_messages(
+            [item.model_dump() for item in payload.messages],
+            max_tokens=payload.max_tokens,
+            temperature=payload.temperature,
+        )
+        return {
+            "ok": True,
+            "content": result["answer"],
+            "model": result["model"],
+            "provider": "groq",
+        }
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     except RuntimeError as error:

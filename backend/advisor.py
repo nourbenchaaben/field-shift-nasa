@@ -50,20 +50,42 @@ def answer(
     if not clean_message or len(clean_message) > MAX_MESSAGE_LENGTH:
         raise ValueError(f"message must contain 1-{MAX_MESSAGE_LENGTH} characters")
 
-    # OPENAI_API_KEY is the conventional name for OpenAI-compatible providers
-    # such as Groq. Keep LLM_API_KEY as a backwards-compatible alternative.
-    # Use the configured LLM key explicitly so a stale OPENAI_API_KEY cannot
-    # silently override the provider key.
-    api_key = os.getenv("LLM_API_KEY")
-    if not api_key:
-        raise RuntimeError("LLM_API_KEY is not configured for the backend")
-
-    base_url = os.getenv("LLM_BASE_URL", DEFAULT_BASE_URL).rstrip("/")
-    model = os.getenv("ADVISOR_MODEL", DEFAULT_MODEL)
     request_messages = _messages(history if isinstance(history, list) else [], clean_message)
     request_messages[0]["content"] += "\n\nFARM CONTEXT (untrusted, possibly incomplete data):\n" + json.dumps(
         context if isinstance(context, dict) else {}, default=str, ensure_ascii=False
     )[:6000]
+    return _complete(request_messages, max_tokens=700, temperature=0.2)
+
+
+def complete_messages(
+    messages: list[dict[str, str]], max_tokens: int = 800, temperature: float = 0.3
+) -> dict[str, Any]:
+    """Send validated OpenAI-compatible chat messages through the server key."""
+    if not isinstance(messages, list) or not 1 <= len(messages) <= 12:
+        raise ValueError("messages must contain between 1 and 12 items")
+    cleaned: list[dict[str, str]] = []
+    total_chars = 0
+    for item in messages:
+        role = item.get("role")
+        content = item.get("content")
+        if role not in {"system", "user", "assistant"} or not isinstance(content, str) or not content.strip():
+            raise ValueError("each message needs a valid role and non-empty content")
+        total_chars += len(content)
+        cleaned.append({"role": role, "content": content[:6000]})
+    if total_chars > 18000:
+        raise ValueError("chat context is too large")
+    return _complete(cleaned, max_tokens=max_tokens, temperature=temperature)
+
+
+def _complete(
+    request_messages: list[dict[str, str]], max_tokens: int, temperature: float
+) -> dict[str, Any]:
+    # Keep provider credentials exclusively on the backend.
+    api_key = os.getenv("LLM_API_KEY")
+    if not api_key:
+        raise RuntimeError("LLM_API_KEY is not configured for the backend")
+    base_url = os.getenv("LLM_BASE_URL", DEFAULT_BASE_URL).rstrip("/")
+    model = os.getenv("ADVISOR_MODEL", DEFAULT_MODEL)
 
     try:
         response = requests.post(
@@ -76,8 +98,8 @@ def answer(
             json={
                 "model": model,
                 "messages": request_messages,
-                "max_tokens": 700,
-                "temperature": 0.2,
+                "max_tokens": max_tokens,
+                "temperature": temperature,
             },
             timeout=LLM_TIMEOUT_SECONDS,
         )

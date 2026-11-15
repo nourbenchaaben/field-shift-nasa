@@ -21,6 +21,13 @@ import {
 } from '../data/regionalMarketData';
 import { getLanguageByCode } from '../data/languages';
 
+const API_ROOT = (
+  (import.meta.env.VITE_TADAWOL_API_URL as string | undefined) ??
+  'http://localhost:8000/api/analyze'
+).replace(/\/api\/analyze\/?$/, '');
+const AI_CHAT_URL = `${API_ROOT}/api/ai-chat`;
+const AI_STATUS_URL = `${API_ROOT}/api/ai-status`;
+
 export type AiProviderId = 'groq' | 'gemini' | 'openrouter' | 'xai' | 'pollinations' | 'builtin';
 
 export interface ServerAiStatus {
@@ -57,7 +64,7 @@ const VALID_CALENDAR_CATEGORIES: CalendarEvent['category'][] = [
 
 export async function checkServerAiStatus(): Promise<ServerAiStatus> {
   try {
-    const res = await fetch('/api/ai-status', { method: 'GET' });
+    const res = await fetch(AI_STATUS_URL, { method: 'GET' });
     if (res.ok) {
       const data = (await res.json()) as Partial<ServerAiStatus>;
       return {
@@ -85,7 +92,7 @@ async function callServerAiProxy(
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), 18000);
   try {
-    const proxyRes = await fetch('/api/ai-chat', {
+    const proxyRes = await fetch(AI_CHAT_URL, {
       method: 'POST',
       signal: controller.signal,
       headers: { 'Content-Type': 'application/json' },
@@ -102,10 +109,11 @@ async function callServerAiProxy(
       model?: string;
       provider?: AiProviderId;
       error?: string;
+      detail?: string;
     };
 
     if (!proxyRes.ok || !data.ok || !data.content) {
-      throw new Error(data.error || `AI proxy returned HTTP ${proxyRes.status}`);
+      throw new Error(data.error || data.detail || `AI API returned HTTP ${proxyRes.status}`);
     }
 
     return {
